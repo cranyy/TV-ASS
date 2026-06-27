@@ -63,6 +63,11 @@ The extension loads straight from a folder/zip
 1. Download this ZIP below
 https://github.com/cranyy/TV-ASS/archive/refs/heads/main.zip
 
+Or just run:
+```
+git clone https://github.com/cranyy/TV-ASS.git
+```
+
 2. Unzip it in any folder 
 
 3. Open Chrome.
@@ -87,6 +92,11 @@ Thats it you can use the new one as normal now, it will be called TV-ASS 1.114
 
 1. Download this ZIP below
 https://github.com/cranyy/TV-ASS/archive/refs/heads/main.zip
+
+Or just run:
+```
+git clone https://github.com/cranyy/TV-ASS.git
+```
 
 2. Unzip it in any folder 
 
