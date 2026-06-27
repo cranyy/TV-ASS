@@ -30,9 +30,9 @@ This sadly, didnt solve the issue with the mismatch fully, and still results mig
 Every winner you save lands in your Downloads as a file. The included Organizer is a small companion that watches that folder and automatically files each result into a clean, per-symbol folder and renames it to something readable like 
 `GOLD-[49.16% Net, 74.37% WR, 3.80% DD], TF-[1m], Range-[Mar 28 2026 - Jun 27 2026], Created-[27.06.26 11h43], Max Value-[Sharpe ratio - 0.547].csv`
 
-— so in one glance you see the stats (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what it was optimized for** plus the value it reached (the `Max Value-[…]` / `Min Value-[…]` part). 
+— so you can see the imporant stuff (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what you optimized it for** plus the value it reached (the `Max Value-[…]` / `Min Value-[…]` part). 
 
-The Organizer is already inside the same folder you unzipped for the extension — look for the file **`start_organizer.bat`**. 
+**HOW TO USE IT**
 
 1. Open the folder you unzipped/cloned.
 2. **Double-click `start_organizer.bat`.** A small console window opens titled *TradingView CSV Organizer* and shows the folder it's **Watching** — your Downloads folder by default.
