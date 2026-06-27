@@ -198,7 +198,7 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     } catch (err) {
       console.warn('Failed to capture filter diagnostics', err)
     }
-    if (!diag || !Array.isArray(diag) || !diag.length || diag.some(item => item.passes !== true)) {
+    if (!diag || !Array.isArray(diag) || diag.some(item => item.passes !== true)) {
       console.warn('AutoSave blocked: filter diagnostics not satisfied', diag)
       return
     }
@@ -301,6 +301,18 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     let filenameBase = `${ticker}_${netStr}net_${wrStr}wr_${ddStr}dd`;
     if (timeFrame) filenameBase += `_TF${timeFrame}`;
     if (rangeText) filenameBase += `_RANGE${rangeText}`;
+    const optParamForToken = (testResults && testResults.optParamName) ? testResults.optParamName : backtest.DEF_MAX_PARAM_NAME;
+    let optValueStr = '';
+    const rawOptVal = (res.data && typeof res.data[optParamForToken] !== 'undefined') ? res.data[optParamForToken]
+      : (res && typeof res.bestValue !== 'undefined' ? res.bestValue : undefined);
+    const numOptVal = (typeof rawOptVal === 'number') ? rawOptVal : parseFloat(String(rawOptVal));
+    if (rawOptVal !== null && typeof rawOptVal !== 'undefined' && isFinite(numOptVal)) {
+      const onLower = String(optParamForToken).toLowerCase();
+      const isPercentMetric = /%/.test(String(optParamForToken)) || onLower.includes('percent') || onLower.includes('profitable');
+      optValueStr = `${backtest.convertValue(numOptVal)}${isPercentMetric ? '%' : ''}`;
+    }
+    const optToken = backtest._optTargetFilenameToken(testResults && testResults.optParamName, testResults && testResults.isMaximizing, optValueStr);
+    if (optToken) filenameBase += `_${optToken}`;
     if (safeSuffix)
       filenameBase += `_${safeSuffix}`;
 
@@ -400,6 +412,21 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     console.error('AutoSave error', err);
   }
 };
+
+backtest._optTargetFilenameToken = (optParamName, isMaximizing, optValueStr) => {
+  const prefix = isMaximizing === false ? 'minvalue' : 'maxvalue'
+  let name = String(optParamName || backtest.DEF_MAX_PARAM_NAME)
+    .replace(/\s*\/\s*/g, ' - ')   // "a / b"  -> "a - b"
+    .replace(/\s*:\s*/g, ' ')      // ": All"  -> " All"
+    .replace(/[\\*?"<>|]/g, '')    // drop any other reserved char (none in current vocab, defensive)
+    .replace(/\s+/g, ' ')
+    .trim()
+  if (optValueStr != null && String(optValueStr).length) {
+    const v = String(optValueStr).replace(/[\\/:*?"<>|]/g, '').replace(/\s+/g, ' ').trim()
+    if (v) name += ` - ${v}`
+  }
+  return `${prefix}-${name}`
+}
 
 function sanitizeFilename(name) {
   if (!name)
@@ -911,7 +938,7 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
           if (testResults._metricMissStreak >= METRIC_MISS_ABORT) {
             const available = dataKeys.filter(k => /:\s*All$/.test(k))
             const availList = (available.length ? available : dataKeys).slice(0, 12).join(', ')
-            await ui.showErrorPopup(`Optimization target "${testResults.optParamName}" was not found in the strategy report across ${testResults._metricMissStreak} populated reports. This TradingView report exposes overall metrics only (no Long/Short breakdown). Available targets include: ${availList}. Set one of these as the optimization parameter in the popup and run again.`)
+            await ui.showErrorPopup(`Optimization target "${testResults.optParamName}" was not found in the strategy report across ${testResults._metricMissStreak} populated reports. The parser reads every report sub-tab, so this metric is genuinely absent (TradingView may have removed it — e.g. "Max contracts held"). Available targets include: ${availList}. Set one of these as the optimization parameter in the popup and run again.`)
             break
           }
         }
@@ -962,7 +989,15 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
 backtest.convertValue = (value) => {
   if (!value)
     return 0
-  return (Math.round(value * 100) / 100).toFixed(2)
+  let s = String(value)                          // FULL shortest round-trip precision (1.192391239139131 stays whole)
+  if (/e/i.test(s))                              // defensive: expand any scientific notation (out-of-range tiny/huge; never in normal metric range)
+    s = Number(value).toFixed(12).replace(/0+$/, '').replace(/\.$/, '')
+  const dot = s.indexOf('.')
+  if (dot === -1)
+    s += '.00'                                   // integer -> 2 dp (e.g. "100" -> "100.00")
+  else if (s.length - dot - 1 === 1)
+    s += '0'                                      // 1 dp -> 2 dp (e.g. "2.3" -> "2.30")
+  return s
 }
 
 
@@ -1060,7 +1095,7 @@ async function getInitBestValues(testResults) {
         } else {
           const available = baseKeys.filter(k => /:\s*All$/.test(k))
           const availList = (available.length ? available : baseKeys).slice(0, 12).join(', ')
-          throw new Error(`Optimization target "${testResults.optParamName}" is not present in the strategy report. This TradingView report exposes overall metrics only (no Long/Short breakdown). Available targets include: ${availList}. Set one of these as the optimization parameter in the popup and run again.`)
+          throw new Error(`Optimization target "${testResults.optParamName}" is not present in the strategy report. The parser reads every report sub-tab, so this metric is genuinely absent (TradingView may have removed it — e.g. "Max contracts held"). Available targets include: ${availList}. Set one of these as the optimization parameter in the popup and run again.`)
         }
       }
     }

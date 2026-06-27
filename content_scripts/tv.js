@@ -23,6 +23,25 @@ function normalizeMetricName(name) {
   if (/^max drawdown$/i.test(s)) return 'Max equity drawdown'
   if (/^profitable trades$/i.test(s)) return 'Percent profitable'
 
+  if (/^net pnl$/i.test(s)) return 'Net profit'                       // returns table "Net PnL" (live; classic "Net P&L" handled above)
+  if (/^open pnl$/i.test(s)) return 'Open P&L'
+  if (/^total winners$/i.test(s)) return 'Winning trades'
+  if (/^total losers$/i.test(s)) return 'Losing trades'
+  if (/^average pnl$/i.test(s)) return 'Avg P&L'
+  if (/^average profit \/ average loss$/i.test(s)) return 'Ratio avg win / avg loss'  // BEFORE "Average profit" (prefix)
+  if (/^average profit$/i.test(s)) return 'Avg winning trade'
+  if (/^average loss$/i.test(s)) return 'Avg losing trade'
+  if (/^largest profit$/i.test(s)) return 'Largest winning trade'
+  if (/^largest loss$/i.test(s)) return 'Largest losing trade'
+  if (/^largest profit %$/i.test(s)) return 'Largest winning trade %'
+  if (/^largest loss %$/i.test(s)) return 'Largest losing trade %'
+  if (/^average bars in trades$/i.test(s)) return 'Avg # bars in trades'
+  if (/^average bars in winners$/i.test(s)) return 'Avg # bars in winning trades'
+  if (/^average bars in losers$/i.test(s)) return 'Avg # bars in losing trades'
+  // Buy & hold: keep the abs and the % as DISTINCT canonical keys (dropdown has both "Buy & hold return" and "Buy & hold return %") — never collapse both to the bare name.
+  if (/^buy and hold pnl$/i.test(s)) return 'Buy & hold return'
+  if (/^buy and hold % gain$/i.test(s)) return 'Buy & hold return %'
+
   // Drawdown variants - map to distinct canonical names
   if (/Max equity drawdown as % of initial capital/i.test(s)) return 'Max equity drawdown %'
   if (/Max equity drawdown.*intrabar/i.test(s)) return 'Max equity drawdown intrabar'
@@ -33,6 +52,8 @@ function normalizeMetricName(name) {
   if (/Max equity run-up as % of initial capital/i.test(s)) return 'Max equity run-up %'
   if (/Max equity run-up.*intrabar/i.test(s)) return 'Max equity run-up intrabar'
   if (/Max equity run-up.*close-to-close/i.test(s)) return 'Max equity run-up close-to-close'
+  if (/^max run-up as % of initial capital \(intrabar\)$/i.test(s)) return 'Max equity run-up %'
+  if (/^max run-up \(intrabar\)$/i.test(s)) return 'Max equity run-up'
 
   return s
 }
@@ -2221,6 +2242,12 @@ tv._parseRows = (allReportRowsEl, strategyHeaders, report) => {
           }
         }
       }
+      if (isSingleValue && paramName) {
+        if (Object.hasOwn(report, paramName) && !Object.hasOwn(report, `${paramName}: All`))
+          report[`${paramName}: All`] = report[paramName]
+        if (Object.hasOwn(report, `${paramName} %`) && !Object.hasOwn(report, `${paramName} %: All`))
+          report[`${paramName} %: All`] = report[`${paramName} %`]
+      }
     }
   }
   return report
@@ -2267,7 +2294,154 @@ tv._parseMetrics = async (report) => {
   return report
 }
 
-tv.parseReportTable = async () => {
+tv._getMetricGroupTitle = (group) => {
+  const titleEl = [...(group?.children || [])]
+    .find(child => child.matches?.('p[class^="title"], p[class*=" title"]'))
+  return (titleEl?.innerText || '').trim()
+}
+
+tv._getMetricSectionRoot = (el) => {
+  const reportRoot = page.$(SEL.reportSectionRoot) || page.$('#bottom-area')
+  for (let node = el; node && node !== reportRoot; node = node.parentElement) {
+    if (tv._getMetricGroupTitle(node)) return node
+  }
+  return null
+}
+
+tv._getMetricSectionGroups = () => {
+  const sections = new Set()
+  for (const el of document.querySelectorAll(SEL.metricSectionTable)) {
+    const s = tv._getMetricSectionRoot(el); if (s) sections.add(s)
+  }
+  for (const el of document.querySelectorAll(SEL.metricSectionSubTab)) {
+    const s = tv._getMetricSectionRoot(el); if (s) sections.add(s)
+  }
+  return [...sections]
+}
+
+tv._readSectionTable = (group, report) => {
+  const table = group.querySelector('table')
+  if (!table) return report
+  const strategyHeaders = [...table.querySelectorAll('thead > tr > th')].map(h => (h?.innerText || '').trim())
+  const rowEls = table.querySelectorAll('tbody > tr')
+  if (rowEls.length) report = tv._parseRows(rowEls, strategyHeaders, report)
+  return report
+}
+
+// canonical metric BASE (side/percent stripped) -> the sub-tab id whose table holds it. Built from the
+// live Jun-2026 report (E3) so a TARGETED parse clicks ONLY the sub-tab holding the needed metric (AC#4).
+// Card-backed metrics (Net profit / Percent profitable / Profit factor / Max equity drawdown) are resolved
+// by _parseMetrics BEFORE any click, so those entries here are used only when a Long/Short variant is needed.
+// An unmapped base falls through to the bounded last-resort pass in parseReportTable (never a per-cycle full scan).
+tv.METRIC_SECTION_TAB = {
+  'net profit': 'returns-summary-table',
+  'gross profit': 'returns-summary-table',
+  'gross loss': 'returns-summary-table',
+  'commission paid': 'returns-summary-table',
+  'open p&l': 'returns-summary-table',
+  'profit factor': 'returns-summary-table',
+  'expected payoff': 'returns-summary-table',
+  'initial capital': 'returns-summary-table',
+  'total trades': 'trades-analysis-table',
+  'total open trades': 'trades-analysis-table',
+  'winning trades': 'trades-analysis-table',
+  'losing trades': 'trades-analysis-table',
+  'percent profitable': 'trades-analysis-table',
+  'avg p&l': 'trades-analysis-table',
+  'avg winning trade': 'trades-analysis-table',
+  'avg losing trade': 'trades-analysis-table',
+  'ratio avg win / avg loss': 'trades-analysis-table',
+  'largest winning trade': 'trades-analysis-table',
+  'largest losing trade': 'trades-analysis-table',
+  'avg # bars in trades': 'trades-analysis-table',
+  'avg # bars in winning trades': 'trades-analysis-table',
+  'avg # bars in losing trades': 'trades-analysis-table',
+  'outliers': 'trades-analysis-table',
+  'buy & hold return': 'benchmarking-table',
+  'strategy outperformance': 'benchmarking-table',
+  'sharpe ratio': 'risk-adjusted-performance-table',
+  'sortino ratio': 'risk-adjusted-performance-table',
+  'max equity run-up': 'run-ups-table',
+  'return of max drawdown': 'drawdowns-table',
+  'margin calls': 'margin-usage-table',
+  'max margin used': 'margin-usage-table',
+  'average margin used': 'margin-usage-table',
+  'margin efficiency': 'margin-usage-table',
+}
+
+tv._metricBase = (name) => String(name || '')
+  .toLowerCase()
+  .replace(/:\s*(all|long|short)\s*$/i, '')   // strip side
+  .replace(/\s+percent\s*$/i, '')             // strip trailing "percent" word
+  .replace(/\s*%\s*$/i, '')                   // strip trailing percent sign
+  .trim()
+
+tv._sectionTabIdForMetric = (name) => tv.METRIC_SECTION_TAB[tv._metricBase(name)] || null
+
+// Parse ONE section block. Always reads the currently-rendered (selected DETAIL) table for FREE (0 clicks).
+// Clicks a HIDDEN detail sub-tab only when allowed (full harvest, the tab id is in allowedTabIds, or the bounded
+// fallback pass), waits until THAT tab is actually selected before reading (never parse the previous tab's stale
+// rows), then RESTORES the block's ORIGINAL selection — including "Overview" (strategy-report-summary), so the
+// user's view never churns. neededRemaining (a Set) shrinks as metrics resolve, so a card-backed target => 0 clicks.
+tv._parseMetricSectionGroup = async (group, report, parsedTabs, opts) => {
+  const { fullHarvest = false, allowedTabIds = null, neededRemaining = null, allowFallback = false } = opts || {}
+  const groupTitle = tv._getMetricGroupTitle(group)
+  const allTabs = [...group.querySelectorAll('button[id][aria-selected]')]
+  const detailTabs = allTabs.filter(b => /-table$/.test(b.id))   // returns-summary-table, …; excludes Overview + top-level tabs
+  if (!detailTabs.length) return report
+  // restore target = whatever was selected ACROSS ALL section buttons (incl. Overview), not just detail tabs
+  const originallySelected = allTabs.find(b => b.getAttribute('aria-selected') === 'true') || null
+
+  // 1) read the rendered table for free — only when a DETAIL tab is currently selected (Overview has no table)
+  const selectedDetail = detailTabs.find(b => b.getAttribute('aria-selected') === 'true') || null
+  if (selectedDetail) {
+    const selKey = `${groupTitle}::${selectedDetail.id}`
+    if (!parsedTabs.has(selKey)) {
+      report = tv._readSectionTable(group, report)
+      parsedTabs.add(selKey)
+      if (neededRemaining) for (const k of [...neededRemaining]) if (Object.hasOwn(report, k)) neededRemaining.delete(k)
+    }
+  }
+
+  // 2) hidden detail sub-tabs — click only the ALLOWED ones
+  let clickedAny = false
+  for (const tabBtn of detailTabs) {
+    if (!fullHarvest && neededRemaining && neededRemaining.size === 0) break
+    const tabKey = `${groupTitle}::${tabBtn.id}`
+    if (parsedTabs.has(tabKey)) continue
+    if (tabBtn.getAttribute('aria-selected') === 'true') continue
+    const allowClick = fullHarvest || (allowedTabIds && allowedTabIds.has(tabBtn.id)) || allowFallback
+    if (!allowClick) continue
+    tabBtn.scrollIntoView({ block: 'center' })
+    await page.waitForTimeout(60)
+    page.mouseClick(tabBtn)
+    clickedAny = true
+    // wait until THIS tab is actually selected (its table swapped in) — never read the previous tab's stale rows
+    let became = false
+    for (let w = 0; w < 15; w++) {
+      await page.waitForTimeout(60)
+      if (tabBtn.getAttribute('aria-selected') === 'true' && group.querySelector('table')) { became = true; break }
+    }
+    if (became) {
+      await page.waitForTimeout(80)   // brief settle so the new table's rows are populated
+      report = tv._readSectionTable(group, report)
+      if (neededRemaining) for (const k of [...neededRemaining]) if (Object.hasOwn(report, k)) neededRemaining.delete(k)
+    }
+    parsedTabs.add(tabKey)   // mark attempted either way so the bounded fallback never re-clicks a flaky tab
+  }
+
+  // 3) restore the block's original selection (incl. Overview) so the user's report view doesn't churn each cycle
+  if (clickedAny && originallySelected && originallySelected.getAttribute('aria-selected') !== 'true') {
+    page.mouseClick(originallySelected)
+    for (let w = 0; w < 10; w++) {
+      if (originallySelected.getAttribute('aria-selected') === 'true') break
+      await page.waitForTimeout(60)
+    }
+  }
+  return report
+}
+
+tv.parseReportTable = async (neededMetrics = null) => {
   // First expand all metric groups
   for (const groupButton of [
     [SEL.metricPerformanceGroup, SEL.metricPerformanceGroupExpanded],
@@ -2287,6 +2461,33 @@ tv.parseReportTable = async () => {
 
   let report = {}
   report = await tv._parseMetrics(report)
+
+  try {
+    const fullHarvest = neededMetrics === null
+    const parsedTabs = new Set()
+    const groups = tv._getMetricSectionGroups()
+    if (fullHarvest) {
+      for (const group of groups)
+        report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { fullHarvest: true })
+    } else {
+      const neededRemaining = new Set((neededMetrics || []).filter(Boolean).filter(k => !Object.hasOwn(report, k)))
+      // map each still-missing needed metric to the ONE sub-tab that holds it (AC#4: click only those)
+      const allowedTabIds = new Set()
+      for (const k of neededRemaining) { const id = tv._sectionTabIdForMetric(k); if (id) allowedTabIds.add(id) }
+      // PASS A — read every rendered table free + click ONLY the mapped sub-tabs
+      for (const group of groups)
+        report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { allowedTabIds, neededRemaining })
+      // PASS B — bounded last-resort, ONLY if a needed metric is still missing; stops as soon as all needed resolve
+      if (neededRemaining.size > 0) {
+        for (const group of groups) {
+          if (neededRemaining.size === 0) break
+          report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { neededRemaining, allowFallback: true })
+        }
+      }
+    }
+  } catch (e) {
+    console.log('[TV-ASS] ISSUE015 section harvest error:', e && e.message ? e.message : e)
+  }
 
   let foundDataQaIdTables = false
 
@@ -2497,8 +2698,14 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
   isProcessError = isProcessError || document.querySelector(SEL.strategyReportError)
   await page.waitForTimeout(250) // Waiting for update numbers in table
 
-  if (!isProcessError)
-    reportData = await tv.parseReportTable()
+  if (!isProcessError) {
+    const neededMetrics = [testResults.optParamName]
+    try {
+      if (typeof _getFilterConfigs === 'function')
+        for (const f of _getFilterConfigs(testResults)) if (f && f.paramName) neededMetrics.push(f.paramName)
+    } catch (e) { /* fall back to target-only; full harvest is never triggered from the hot path */ }
+    reportData = await tv.parseReportTable(neededMetrics)
+  }
 
   if (!isProcessError && !isProcessEnd && testResults.perfomanceSummary.length) {
     const lastRes = testResults.perfomanceSummary[testResults.perfomanceSummary.length - 1]

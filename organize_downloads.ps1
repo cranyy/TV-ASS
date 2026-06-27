@@ -122,7 +122,6 @@ function Process-StrategyCsv {
 
         $fileSuffix = $null
         if ($Match.Groups['suffix'].Success) {
-            # preserve the suffix's original case so TF1m / RANGE… stay as the extension wrote them
             $fileSuffix = $Match.Groups['suffix'].Value
         }
 
@@ -135,7 +134,6 @@ function Process-StrategyCsv {
             $winRatePercent = $winRate
             $drawdownPercent = $drawdownValue
         } else {
-            # the net token is already "Net Profit %" ×100 (the extension prioritizes the % column, which TradingView computes against the real starting capital), so convert with /100 exactly like wr/dd — capital-independent and accurate.
             # Raw format: values are already percentage ×100 (6315 = 63.15%), so divide by 100
             $netPercent = $netValue / 100
             $winRatePercent = $winRate / 100
@@ -149,14 +147,13 @@ function Process-StrategyCsv {
             New-Item -ItemType Directory -Path $destinationFolder | Out-Null
         }
 
-        # build the output filename in the bracketed human-readable format:
-        #   TICKER-[N% Net, N% WR, N% DD], TF-[tf], Range-[Mon D YYYY - Mon D YYYY], Created-[dd.MM.yy HHhmm][_FINAL]
-        # ticker stays UPPERCASE; time uses 'h' (':' is illegal in Windows filenames); CreationTime is the source (stable across the sanitizer's content rewrite). The passthrough suffix (e.g. "TF1m_RANGEjun-12-2024--jun-14-2026_final") is parsed into named segments; empty TF/Range segments are omitted; range dates are reformatted with a raw fallback; 'final' becomes a trailing _FINAL. Upload is unaffected (content-driven).
 
         # Parse the passthrough suffix into TF / Range / final / leftover tokens
         $tfValue = $null
         $rangeRaw = $null
         $isFinal = $false
+        $optDir = $null
+        $optName = $null
         $extraTokens = @()
         if ($fileSuffix) {
             foreach ($tok in ($fileSuffix -split '_')) {
@@ -164,6 +161,7 @@ function Process-StrategyCsv {
                 if ($tok -match '^TF(.+)$')         { $tfValue = $Matches[1] }
                 elseif ($tok -match '^RANGE(.+)$')  { $rangeRaw = $Matches[1] }
                 elseif ($tok -ieq 'final')          { $isFinal = $true }
+                elseif ($tok -match '^(max|min)value-(.+)$') { $optDir = $Matches[1]; $optName = $Matches[2] }
                 else                                { $extraTokens += $tok }
             }
         }
@@ -198,13 +196,17 @@ function Process-StrategyCsv {
         if ($rangePretty) { $namePieces += ("Range-[{0}]" -f $rangePretty) }
         foreach ($x in $extraTokens) { $namePieces += $x }
         $namePieces += ("Created-[{0}]" -f $createdInner)
+        if ($optName) {
+            $optLabel = if ($optDir -ieq 'min') { 'Min Value' } else { 'Max Value' }
+            $namePieces += ("{0}-[{1}]" -f $optLabel, $optName)
+        }
         $newFileName = ($namePieces -join ', ')
         if ($isFinal) { $newFileName += '_FINAL' }
         $newFileName += '.csv'
         $newFilePath = Join-Path -Path $destinationFolder -ChildPath $newFileName
 
         Write-Host "  - Moving and renaming to: $newFilePath"
-        Move-Item -Path $File.FullName -Destination $newFilePath -Force
+        Move-Item -LiteralPath $File.FullName -Destination $newFilePath -Force
 
         if ($ProcessedSet) {
             $ProcessedSet.Add($newFilePath) | Out-Null
@@ -221,16 +223,13 @@ function Process-StrategyCsv {
 }
 
 # --- CONFIGURATION ---
-# the watch folder is chosen at runtime via the menu below and remembered in organizer.config next to the script — any user adapts it with no code editing.
 $checkIntervalSeconds = 2 # How often to check for new files.
-$rawFilePattern = '(?ix)^(?<primary>[A-Z0-9]+)(?:_(?<secondary>[A-Z0-9]+))?_(?<net>-?\d+(?:\.\d+)?)net_(?<wr>\d+(?:\.\d+)?)wr_(?<dd>\d+(?:\.\d+)?)dd(?:_(?<suffix>[A-Z0-9-]+(?:_[A-Z0-9-]+)*))?\.csv$'
-$formattedFilePattern = '(?ix)^(?<primary>[A-Z0-9]+)(?:_(?<secondary>[A-Z0-9]+))?_(?<net>-?\d+(?:\.\d+)?)%net_(?<wr>-?\d+(?:\.\d+)?)%wr_(?<dd>-?\d+(?:\.\d+)?)%dd(?:_(?<suffix>[A-Z0-9-]+(?:_[A-Z0-9-]+)*))?\.csv$'
+$rawFilePattern = '(?ix)^(?<primary>[A-Z0-9]+)(?:_(?<secondary>[A-Z0-9]+))?_(?<net>-?\d+(?:\.\d+)?)net_(?<wr>\d+(?:\.\d+)?)wr_(?<dd>\d+(?:\.\d+)?)dd(?:_(?<suffix>[A-Z0-9\x20%&#\.\-\[\]]+(?:_[A-Z0-9\x20%&#\.\-\[\]]+)*))?\.csv$'
+$formattedFilePattern = '(?ix)^(?<primary>[A-Z0-9]+)(?:_(?<secondary>[A-Z0-9]+))?_(?<net>-?\d+(?:\.\d+)?)%net_(?<wr>-?\d+(?:\.\d+)?)%wr_(?<dd>-?\d+(?:\.\d+)?)%dd(?:_(?<suffix>[A-Z0-9\x20%&#\.\-\[\]]+(?:_[A-Z0-9\x20%&#\.\-\[\]]+)*))?\.csv$'
 
-# config file lives next to the script; created/updated only by the menu. $PSScriptRoot is set when run as a file; fall back to the current dir if dot-sourced.
 $scriptDir  = if ($PSScriptRoot) { $PSScriptRoot } else { (Get-Location).Path }
 $configPath = Join-Path $scriptDir 'organizer.config'
 
-# resolve the user's real Downloads folder (handles relocated / OneDrive-redirected Downloads via the Windows known-folder ID); fall back to <profile>\Downloads.
 function Get-DefaultDownloadsFolder {
     $key  = 'HKCU:\Software\Microsoft\Windows\CurrentVersion\Explorer\User Shell Folders'
     $guid = '{374DE290-123F-4565-9164-39C4925E467B}'
@@ -244,7 +243,6 @@ function Get-DefaultDownloadsFolder {
     return (Join-Path $env:USERPROFILE 'Downloads')
 }
 
-# read the remembered watch folder (one plain line); ignore it if missing/blank/gone so the menu re-asks instead of watching a dead path.
 function Get-SavedWatchFolder {
     try {
         if (Test-Path -LiteralPath $configPath) {
@@ -255,14 +253,12 @@ function Get-SavedWatchFolder {
     return $null
 }
 
-# persist the chosen folder (menu-managed; user never edits this file).
 function Save-WatchFolder {
     param([string]$Path)
     try { Set-Content -LiteralPath $configPath -Value $Path -Encoding UTF8 -ErrorAction Stop }
     catch { Write-Warning "Could not save your choice to '$configPath': $_" }
 }
 
-# let the user pick the folder to WATCH via an Explorer folder picker (opens expanded at the best-guess Downloads), with Read-Host (Enter = keep the guess) as the no-GUI fallback. Returns a canonical path so it matches Get-ChildItem's DirectoryName for the exact-match top-level guard. This only chooses what to watch — it never changes the browser's download location.
 function Select-WatchFolder {
     param([string]$Current)
     $startPath = if ($Current -and (Test-Path -LiteralPath $Current)) { $Current } else { Get-DefaultDownloadsFolder }
@@ -286,7 +282,6 @@ function Select-WatchFolder {
     }
 }
 
-# menu front end; everything controllable at launch (no code editing / no flags). On first run the picker opens straight away at the detected Downloads. Reads one keypress so 1/2/3 act instantly.
 $watchFolder = Get-SavedWatchFolder
 if (-not $watchFolder) {
     $watchFolder = Select-WatchFolder -Current (Get-DefaultDownloadsFolder)

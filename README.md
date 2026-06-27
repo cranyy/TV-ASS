@@ -2,7 +2,7 @@
 
 All the things listed below are some of the changes I added to this extension that I wanted as additions for myself. Some of them are simple QoL improvements, others are a bit more experimental. Please do note, that I cannot guarantee the stability or reliability of my version, so use at your own discretion.
 
-Again, I cannot express enough credit to the original repo creator https://github.com/akumidv/tradingview-assistant-chrome-extension. All of this is built entirely on his work, and comparatively, is menial in scale or approach of their original accomplishment. (IN THE PRE AI ERA EVEN!!).
+Again, I cannot express enough credit to the original repo creator https://github.com/akumidv/tradingview-assistant-chrome-extension. All of this is built entirely on his work, and comparatively, is menial in scale or approach. (IN THE PRE AI ERA EVEN!!). So once again, huge, huge acknowledgments toward @akumidv.
 
 ## DIFFERENCES
 
@@ -12,12 +12,13 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 - **Auto-saves every new best** — every time a new winner is reached, it automatically downloads a results file, and again it still always saves the overall best when the run ends as _FINAL.
 
-- **Reupload to the exact state you started the analysis from** — I was profoundly annoyed at TradingVIew, I would upload and so often match everything by hand, and the result I had supposedly achieved wasn't even close to what it showed on later uploads. So now each saved result also remembers the whole setup: symbol, timeframe, session, date range, chart layout, chart type, and every strategy setting. When you reupload that file later and it puts the chart back the way it was, so the result you saved SHOULD THEORETICALLY BE the one you get, as close to 1:1 as possible, when you check it.
-This sadly, didnt solve the issue with the mismatch fully, and still results might vary, but. hopefully, quite a bit less.
+- **Reupload to the exact state you started the analysis from** — I was profoundly annoyed at TradingVIew, because I would upload and then try to match everything by hand, and the result I had supposedly achieved in the strategy, wasn't even close to what it showed on later uploads, and I couldn't figure out why.
+So now each saved result also remembers the whole setup: symbol, timeframe, session, date range, chart layout, chart type, and every strategy setting. When you reupload that file later it puts the chart back the way it was when you started the strategy, so the result you saved, SHOULD THEORETICALLY BE the one you get on upload.
+This sadly, didnt solve the issue with the mismatch fully, and still results might vary, but, hopefully, quite a bit less.
 
-- **Keeps running while minimized** — I hardened it slightly, so all of the processes can easily work in the background and you dont have to have the strategy in your foreground
+- **Keeps running while minimized** — I hardened it slightly, so all of the processes can easily work in the background and you dont have to have the strategy in your foreground, i.e. you can run 3-4-5 tabs of strategies at once minimized, while doing whatever else you want.
 
-- **Drop-in parameter ranges** — You can immediately download and upload parameters per strategy, with the same buttons we have in the strategy updater. 
+- **Drop-in parameter ranges** — You can immediately download and upload parameters per strategy, with the same buttons we have in the strategy updater, just inside the Parameter seelction.
 
 - **Track in F12 console which settings were applied** — On upload, or during the actual testing process you can see in the console which settings were applied, and hopefully see if they match what was intented to change.
 
@@ -27,13 +28,23 @@ This sadly, didnt solve the issue with the mismatch fully, and still results mig
 ## Downloads Organizer (optional, Windows)
 
 Every winner you save lands in your Downloads as a file. The included Organizer is a small companion that watches that folder and automatically files each result into a clean, per-symbol folder and renames it to something readable like 
-`GOLD-[62.80% Net, 76.42% WR, 4.92% DD], TF-[1m], Range-[Mar 18 2026 - Jun 17 2026], Created-[17.06.26 20h22].csv …`
+`GOLD-[49.16% Net, 74.37% WR, 3.80% DD], TF-[1m], Range-[Mar 28 2026 - Jun 27 2026], Created-[27.06.26 11h43], Max Value-[Sharpe ratio - 0.547].csv`
 
-To use it: double-click **start_organizer.bat**, choose the folder to watch (your Downloads), and leave it running. It's optional — the extension works fine without it.
+— so in one glance you see the stats (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what it was optimized for** plus the value it reached (the `Max Value-[…]` / `Min Value-[…]` part). 
+
+**You don't download anything separately.** The Organizer is already inside the same folder you unzipped for the extension — look for the file **`start_organizer.bat`** next to `manifest.json`. To use it:
+
+1. Open the folder you unzipped (the one containing `manifest.json` and `start_organizer.bat`).
+2. **Double-click `start_organizer.bat`.** A small console window opens titled *TradingView CSV Organizer* and shows the folder it's **Watching** — your Downloads folder by default.
+3. If that's the right folder, press **`1`** to start. If your CSVs download somewhere else, press **`2`**, paste the correct folder path (or just press Enter to accept the suggested Downloads), then press **`1`**.
+4. It prints *"Watcher is now active."* — now just **leave that window open** (minimize it) while you run strategies. Every new winner that lands in the folder is filed into its per-symbol folder and renamed automatically. It remembers your folder choice for next time.
+5. To stop it, press **`Ctrl+C`** in that window, or simply close it.
+
+It's Windows-only — it runs on PowerShell, which is already built into Windows, so there's nothing extra to install. It's completely optional; the extension works fine without it. If Windows shows a blue **"Windows protected your PC"** popup the first time, click **More info → Run anyway** (it's just an unsigned local script).
 
 ## NEW STRATEGIES
 
-I added two new methods as well for optimization which I wanted to test out. 
+I added two new methods for optimization which I wanted to test out. 
 
 **Genetic Algorithm (GA)** — an optimizer modelled on natural selection. It keeps a "population" of parameter sets, scores each one on your strategy, keeps the best performers, then breeds new ones by combining two good sets (crossover) and randomly tweaking a few values (mutation). Each generation tends to beat the last, so it converges on strong configurations instead of guessing blindly — in my testing it lands on better results than plain random search. 
 
@@ -42,59 +53,59 @@ I added two new methods as well for optimization which I wanted to test out.
 
 ---
 
-## How to install
+## How to install 
 
 The extension loads straight from a folder/zip
 
-**CHROME** 
+## CHROME
 
 
-Download this ZIP below
+1. Download this ZIP below
 https://github.com/cranyy/TV-ASS/archive/refs/heads/main.zip
 
-Unzip it in any folder 
+2. Unzip it in any folder 
 
-Open Chrome.
+3. Open Chrome.
 
-Click in the top right corner the 3 dots to open the Settings
+4. Click in the top right corner the 3 dots to open the Settings
 
-Click Extensions > Manage Extensions
+5. Click Extensions > Manage Extensions
 
-You will see the Tradingview assistant 2.11.16.
+5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.11.16.
 [OPTIONAL] -- you can disable it temporarily with the blue toggle to not confuse you, you can click again to reenable it at any time.
 
-Then in the Top Right Corner there is a toggle - Developer Mode - click it - and 3 new things will appear.
+6. Then in the Top Right Corner there is a toggle - Developer Mode - click it - and 3 new things will appear.
 
-Click Load Unpacked.
+7. Click Load Unpacked.
 
-Select the directory you unzipped to in Step 2.
+8. Select the directory you unzipped to in Step 2. 
 
-Thats it you can use the new one as normal now.
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.114
+------------------------------------------------
+## EDGE
 
-**EDGE** 
 
-
-Download this ZIP below
+1. Download this ZIP below
 https://github.com/cranyy/TV-ASS/archive/refs/heads/main.zip
 
-Unzip it in any folder 
+2. Unzip it in any folder 
 
-Open Edge.
+3. Open Edge.
 
-Click in the top right corner the 3 dots to open the menu
+4. Click in the top right corner the 3 dots to open the menu
 
-Click Extensions > Manage extensions
+5. Click Extensions > Manage extensions
 
-You will see the original Tradingview assistant in the list.
-[OPTIONAL] -- you can disable it temporarily with the toggle to not confuse you, you can click again to reenable it at any time.
+5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.11.16.
+[OPTIONAL] -- you can disable it temporarily with the blue toggle to not confuse you, you can click again to reenable it at any time.
 
-This is the one bit that differs from Chrome: the Developer Mode toggle is in the BOTTOM-LEFT corner (not the top right) - click it, and 3 new things will appear at the top.
+6. This is the one bit that differs from Chrome: the Developer Mode toggle is in the BOTTOM-LEFT corner (not the top right) - click it, and 3 new things will appear at the top.
 
-Click Load Unpacked.
+7. Click Load Unpacked.
 
-Select the directory you unzipped to.
+8. Select the directory you unzipped to.
 
-Thats it you can use the new one as normal now.
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.114
 
 ## Good to know
 

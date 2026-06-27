@@ -67,6 +67,10 @@ const SEL = {
   metricDrawdownsTable: '[data-qa-id="drawdowns-table"]',
   metricsValueCell: '[class^="reportContainer-"] [class^="containerCell"]',
 
+  reportSectionRoot: '[class^="backtestingReport"]',
+  metricSectionSubTab: '[class^="backtestingReport"] button[id][aria-selected]',
+  metricSectionTable: '[class^="backtestingReport"] table',
+
   // Legacy performance tab selectors (kept for backwards compatibility)
   get strategyPerformanceTab() {
     return selStatus.isNewVersion ? '[id="Performance"]' : '[id="Performance Summary"]'
