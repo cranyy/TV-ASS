@@ -6,23 +6,24 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## DIFFERENCES
 
-- **Auto-reconnect** — if TradingView drops its market-data connection during a long run, it reconnects on its own, so the run keeps going while you're away.
+- **Auto-reconnect** — if TradingView drops its market-data connection during a long run, it reconnects on its own, so the run keeps going while you're away. ( this is a thing i added ages ago, could have been superseded by the newer changes)
 
-- **Two filters at once** — I added a second filter because i wanted to use different combinations of stuff Profitable ≥ 5% and Max Drawdown ≤ 20%. Could potentially add a third to make it even more granular.
+- **Keeps running while minimized** — I hardened it slightly, so all of the processes can easily work in the background and you dont have to have the strategy in your foreground, i.e. you can run 3-4-5 tabs of strategies at once minimized, while doing whatever else you want. ( this is a second thing i added ages ago, could have been superseded by the newer change)
 
-- **Auto-saves every new best** — every time a new winner is reached, it automatically downloads a results file, and again it still always saves the overall best when the run ends as _FINAL.
+- **Two filters at once** — I added a second filter because i wanted to use different combinations of stuff like Profitable ≥ 25% and Max Drawdown ≤ 20%. Theoretically all potential parameters are possible as filters. Could potentially add a third to make it even more granular.
 
-- **Reupload to the exact state you started the analysis from** — I was profoundly annoyed at TradingVIew, because I would upload and then try to match everything by hand, and the result I had supposedly achieved in the strategy, wasn't even close to what it showed on later uploads, and I couldn't figure out why.
+- **Auto-saves every new best** — every time a new winner is reached, it automatically downloads a results file based on your original filters, and again it still always saves the overall best when the run ends as _FINAL.
+
+- **Reupload to the exact state you started the analysis from** — I was profoundly annoyed at TradingVIew, because I would upload a saved run, and then try to match everything by hand, and the result I had supposedly achieved in the strategy, wasn't even close to what it showed on later uploads, and I couldn't figure out why.
 So now each saved result also remembers the whole setup: symbol, timeframe, session, date range, chart layout, chart type, and every strategy setting. When you reupload that file later it puts the chart back the way it was when you started the strategy, so the result you saved, SHOULD THEORETICALLY BE the one you get on upload.
 This sadly, didnt solve the issue with the mismatch fully, and still results might vary, but, hopefully, quite a bit less.
 
-- **Keeps running while minimized** — I hardened it slightly, so all of the processes can easily work in the background and you dont have to have the strategy in your foreground, i.e. you can run 3-4-5 tabs of strategies at once minimized, while doing whatever else you want.
-
-- **Drop-in parameter ranges** — You can immediately download and upload parameters per strategy, with the same buttons we have in the strategy updater, just inside the Parameter seelction.
+- **Download and upload parameter ranges** — You can immediately download and upload parameters per strategy, with the same buttons we have in the strategy updater, just inside the Parameter seelction. So you select that you want, click the down arrow and download it as is, then when you upload, it will set it to your saved parameters.
 
 - **Track in F12 console which settings were applied** — On upload, or during the actual testing process you can see in the console which settings were applied, and hopefully see if they match what was intented to change.
 
 - **Minor speed ups** — It is marginally faster at selecting settings and applying them.
+
 
 
 ## Downloads Organizer (optional, Windows)
@@ -30,7 +31,7 @@ This sadly, didnt solve the issue with the mismatch fully, and still results mig
 Every winner you save lands in your Downloads as a file. The included Organizer is a small companion that watches that folder and automatically files each result into a clean, per-symbol folder and renames it to something readable like 
 `GOLD-[49.16% Net, 74.37% WR, 3.80% DD], TF-[1m], Range-[Mar 28 2026 - Jun 27 2026], Created-[27.06.26 11h43], Max Value-[Sharpe ratio - 0.547].csv`
 
-— so you can see the imporant stuff (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what you optimized it for** plus the value it reached (the `Max Value-[…]` / `Min Value-[…]` part). 
+— so you can see the imporant stuff (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what you optimized it for**.
 
 **HOW TO USE IT**
 
