@@ -32,15 +32,15 @@ Every winner you save lands in your Downloads as a file. The included Organizer 
 
 — so in one glance you see the stats (net %, win rate, drawdown), the timeframe, the date range, when it was saved, and **what it was optimized for** plus the value it reached (the `Max Value-[…]` / `Min Value-[…]` part). 
 
-**You don't download anything separately.** The Organizer is already inside the same folder you unzipped for the extension — look for the file **`start_organizer.bat`** next to `manifest.json`. To use it:
+The Organizer is already inside the same folder you unzipped for the extension — look for the file **`start_organizer.bat`**. 
 
-1. Open the folder you unzipped (the one containing `manifest.json` and `start_organizer.bat`).
+1. Open the folder you unzipped/cloned.
 2. **Double-click `start_organizer.bat`.** A small console window opens titled *TradingView CSV Organizer* and shows the folder it's **Watching** — your Downloads folder by default.
 3. If that's the right folder, press **`1`** to start. If your CSVs download somewhere else, press **`2`**, paste the correct folder path (or just press Enter to accept the suggested Downloads), then press **`1`**.
-4. It prints *"Watcher is now active."* — now just **leave that window open** (minimize it) while you run strategies. Every new winner that lands in the folder is filed into its per-symbol folder and renamed automatically. It remembers your folder choice for next time.
+4. It prints *"Watcher is now active."* — just leave it open while you run strategies. Every new winner that lands in the folder is filed into its per-symbol folder and renamed automatically. It remembers your folder choice for next time.
 5. To stop it, press **`Ctrl+C`** in that window, or simply close it.
 
-It's Windows-only — it runs on PowerShell, which is already built into Windows, so there's nothing extra to install. It's completely optional; the extension works fine without it. If Windows shows a blue **"Windows protected your PC"** popup the first time, click **More info → Run anyway** (it's just an unsigned local script).
+It's Windows-only — it runs on PowerShell. It's completely optional; the extension works fine without it. If Windows shows a blue **"Windows protected your PC"** popup the first time, click **More info → Run anyway** (it's just an unsigned local script).
 
 ## NEW STRATEGIES
 
@@ -83,7 +83,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 7. Click Load Unpacked.
 
-8. Select the directory you unzipped to in Step 2. 
+8. Select the directory you unzipped/cloned to in Step 2. 
 
 Thats it you can use the new one as normal now, it will be called TV-ASS 1.114
 ------------------------------------------------
@@ -113,16 +113,16 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 7. Click Load Unpacked.
 
-8. Select the directory you unzipped to.
+8. Select the directory you unzipped to/cloned to in step 2.
 
 Thats it you can use the new one as normal now, it will be called TV-ASS 1.114
+
 
 ## Good to know
 
 - Saved result files are plain spreadsheets — open them in Excel or Google Sheets to compare runs.
 - A re-opened winner restores the chart for everything that can be set automatically. The one thing TradingView won't let any tool set is plot colours, so those are flagged for you to set by hand if you want (they don't affect results).
 - The Organizer is Windows-only.
-
 ---
 
 ## Credits & License
