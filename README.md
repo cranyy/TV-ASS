@@ -76,7 +76,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 5. Click Extensions > Manage Extensions
 
-5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.11.16.
+5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.13.2.
 [OPTIONAL] -- you can disable it temporarily with the blue toggle to not confuse you, you can click again to reenable it at any time.
 
 6. Then in the Top Right Corner there is a toggle - Developer Mode - click it - and 3 new things will appear.
@@ -106,7 +106,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 5. Click Extensions > Manage extensions
 
-5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.11.16.
+5.1 If you have the original version downloaded, it will also show up there - something like Tradingview assistant 2.13.2.
 [OPTIONAL] -- you can disable it temporarily with the blue toggle to not confuse you, you can click again to reenable it at any time.
 
 6. This is the one bit that differs from Chrome: the Developer Mode toggle is in the BOTTOM-LEFT corner (not the top right) - click it, and 3 new things will appear at the top.
