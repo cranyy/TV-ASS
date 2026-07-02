@@ -211,7 +211,8 @@ tv.getStrategy = async (strategyName = '', isIndicatorSave = false, isDeepTest =
   if (!await tv.changeDialogTabToInput())
     throw new Error(`Can\'t activate input tab in strategy parameters` + SUPPORT_TEXT)
 
-  const strategyInputs = await tv.getStrategyParams(isIndicatorSave)
+  // issue#1 (multiple strategies open): pass the verified dialog title so getStrategyParams scrapes ONLY this strategy's dialog, never a second open dialog's inputs.
+  const strategyInputs = await tv.getStrategyParams(isIndicatorSave, false, indicatorName)
   const strategyData = { name: indicatorName, properties: strategyInputs }
 
   if (captureFullContext) {
@@ -248,9 +249,36 @@ tv.getStrategy = async (strategyName = '', isIndicatorSave = false, isDeepTest =
   return strategyData
 }
 
-tv.getStrategyParams = async (isIndicatorSave = false, useLiveCheckbox = false) => {
+// issue#1 (multiple strategies open): resolve the SINGLE strategy dialog to scrape. Prefer the dialog whose title matches expectedTitle; else the only open dialog; else null (ambiguous). This prevents merging cells from a second, unrelated indicator-properties-dialog.
+tv._resolveStrategyDialogRoot = (expectedTitle = '') => {
+  const root = document.querySelector(SEL.tvDialogRoot) || document
+  const dialogs = [...root.querySelectorAll(SEL.indicatorDialog)]
+  if (!dialogs.length) return null
+  if (expectedTitle) {
+    // issue#1: when a specific strategy is requested, return ONLY a title-matching dialog, else null. NEVER return "the only open dialog" when its title doesn't match — that would let a wrong single dialog be scraped as the requested strategy.
+    const want = normalizeTitle(expectedTitle)
+    return dialogs.find(d => {
+      const t = d.querySelector(SEL.indicatorTitleInDialog)
+      return t && normalizeTitle(t.innerText || '') === want
+    }) || null
+  }
+  // no expected title: only unambiguous when exactly one dialog is open
+  return dialogs.length === 1 ? dialogs[0] : null
+}
+
+tv.getStrategyParams = async (isIndicatorSave = false, useLiveCheckbox = false, expectedTitle = '') => {
   const strategyInputs = {} // TODO to list of values and set them in the same order
-  const indicProperties = document.querySelectorAll(SEL.indicatorProperty)
+  // issue#1 (multiple strategies open): scope the scrape to the single verified dialog. If a strategy title was requested but no single dialog matches, REFUSE the document-wide scrape (return empty) so foreign dialogs are never merged. The legacy document-wide fallback is kept ONLY for callers that pass no expectedTitle (e.g. the post-set read-back).
+  const dialogRoot = tv._resolveStrategyDialogRoot(expectedTitle)
+  let indicProperties
+  if (dialogRoot) {
+    indicProperties = dialogRoot.querySelectorAll(SEL.indicatorPropertyInDialog)
+  } else if (expectedTitle) {
+    console.warn(`[TV-ASS] getStrategyParams: no single dialog matching "${expectedTitle}"; refusing document-wide scrape to avoid merging other strategies' inputs`)
+    return strategyInputs
+  } else {
+    indicProperties = document.querySelectorAll(SEL.indicatorProperty)   // legacy fallback ONLY when no expectedTitle was given
+  }
   for (let i = 0; i < indicProperties.length; i++) {
     const propClassName = indicProperties[i].getAttribute('class')
     const propText = indicProperties[i].innerText
@@ -1831,6 +1859,11 @@ tv.getStrategyNameFromPopup = () => {
 tv.openStrategyParameters = async (indicatorTitle, searchAgainstStrategies = false) => {
   const curStrategyTitle = tv.getStrategyNameFromPopup()
   let isOpened = !!curStrategyTitle
+  // issue#1 (multiple strategies open): an already-open dialog only counts as "opened" if its title MATCHES the requested strategy. A stale/wrong dialog left open must NOT be scraped as the requested one — close it (Cancel = no save) so the correct dialog is opened below.
+  if (isOpened && indicatorTitle && normalizeTitle(curStrategyTitle) !== normalizeTitle(indicatorTitle)) {
+    try { const cancelEl = document.querySelector(SEL.cancelBtn); if (cancelEl) { cancelEl.click(); await page.waitForTimeout(250) } } catch (e) {}
+    isOpened = false
+  }
   if (!isOpened)
     isOpened = await tv._openStrategyParamsByLegendSettings(indicatorTitle)
   if (!isOpened && (indicatorTitle && normalizeTitle(indicatorTitle) !== normalizeTitle(curStrategyTitle)) && searchAgainstStrategies) {
@@ -2267,6 +2300,10 @@ tv._parseMetrics = async (report) => {
       // the regex digit class must be single-escaped (\d): a double-escaped class matches a literal backslash + letters (not the digit class), strips every digit, and produces non-numeric card values → "error" each cycle.
       const digitalValues = metricValue.replaceAll(/([\/\-\d\.\n%])|(.)/g, (a, b) => b || '')
       let digitOfValuesArr = digitalValues.split('\n')
+      // issue#2 numeric correctness: TradingView cards can render negatives ACCOUNTING-style, e.g. "(42.50) USD" / "(1.25%)". The digit strip above drops the parentheses (so the number parses POSITIVE and contradicts the chart). Detect the parentheses on the ORIGINAL per-line text — the strip preserves '\n', so _rawLines[i] aligns with digitOfValuesArr[i] — and flip the sign. Does NOT touch already-signed values (leading '-') or the drawdown fix above.
+      const _rawLines = metricValue.split('\n')
+      const _isAccountingNeg = (s) => typeof s === 'string' && /\(\s*[\d.,]+\s*%?\s*\)/.test(s)
+      const _applyParenSign = (n, rawLine) => (typeof n === 'number' && !isNaN(n) && n > 0 && _isAccountingNeg(rawLine)) ? -n : n
       let value0 = null
       let value1 = null
       let name1 = null
@@ -2281,12 +2318,13 @@ tv._parseMetrics = async (report) => {
         } else {
           value1 = digitOfValuesArr[digitOfValuesArr.length - 1].match(/-?\d+\.?\d*/g)
           name1 = digitOfValuesArr[digitOfValuesArr.length - 1].endsWith('%') ? `${metricName} %` : `${metricName}_1`
-          if (['Max equity drawdown'].includes(metricName)) value1 = -1 * value1
+          // issue#2 ("results don't match the chart"): REMOVED the `if (metricName==='Max equity drawdown') value1 = -1 * value1` negation. TradingView shows Max drawdown as a POSITIVE magnitude (live: "Max drawdown 166.09 USD 3.26%") and this card's absolute value0 is already stored positive (+166.09), so negating only the % produced an exported "Max equity drawdown %: -3.26" that both contradicted the chart (+3.26%) AND disagreed with the absolute and with the table parser (negativeValues at ~tv.js:2177 omits plain "Max equity drawdown"). Leaving the % positive makes card=table=chart consistent and fixes "minimize Max drawdown" (minimizing a negative previously chased the LARGEST drawdown).
         }
       }
-      if (Boolean(value0)) report[metricName] = parseFloat(value0)
+      // issue#2 numeric correctness: apply the accounting-negative sign to BOTH card values (value0 from the first line, value1 from the last line). The x/y ratio branch is left untouched.
+      if (Boolean(value0)) report[metricName] = _applyParenSign(parseFloat(value0), _rawLines[0])
       else report[metricName] = metricValue
-      if (Boolean(value1) && name1) report[name1] = (String(value1).includes('/')) ? value1 : parseFloat(value1)
+      if (Boolean(value1) && name1) report[name1] = (String(value1).includes('/')) ? value1 : _applyParenSign(parseFloat(value1), _rawLines[_rawLines.length - 1])
       report[`${metricName}: All`] = report[metricName]
       if (Boolean(value1) && name1) report[`${name1}: All`] = report[name1]
     }
@@ -2699,12 +2737,8 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
   await page.waitForTimeout(250) // Waiting for update numbers in table
 
   if (!isProcessError) {
-    const neededMetrics = [testResults.optParamName]
-    try {
-      if (typeof _getFilterConfigs === 'function')
-        for (const f of _getFilterConfigs(testResults)) if (f && f.paramName) neededMetrics.push(f.paramName)
-    } catch (e) { /* fall back to target-only; full harvest is never triggered from the hot path */ }
-    reportData = await tv.parseReportTable(neededMetrics)
+    // Always harvest the full metric set so the exported final report is complete (every report metric, not just the optimization target + filters).
+    reportData = await tv.parseReportTable(null)
   }
 
   if (!isProcessError && !isProcessEnd && testResults.perfomanceSummary.length) {

@@ -528,12 +528,19 @@ file.convertResultsToCSV = (testResults) => {
 
   if(!testResults || !testResults.perfomanceSummary || !testResults.perfomanceSummary.length)
     return 'There is no data for conversion'
-  let headers = Object.keys(testResults.perfomanceSummary[0]) // The first test table can be with error and can't have rows with previous values when parsedReport
-  if(testResults.hasOwnProperty('paramsNames') && headers.length <= (Object.keys(testResults.paramsNames).length + 1)) { // Find the another header if only params names and 'comment' in headers
-    const headersAll = testResults.perfomanceSummary.find(report => Object.keys(report).length > headers.length)
-    if(headersAll)
-      headers = Object.keys(headersAll)
+  // issue#2 (jiangyoutan): headers were taken from ONE representative row, so any metric column missing from that row was dropped for every row. Build the header set as the UNION of all rows' keys (passing + filtered), preserving first-seen order, so no captured metric is lost. Rows still emit '' for keys they lack (unchanged below).
+  const headers = []
+  const _seenHeader = new Set()
+  const _collectHeaders = (rows) => {
+    if (!Array.isArray(rows)) return
+    for (const row of rows) {
+      if (!row) continue
+      for (const k of Object.keys(row)) if (!_seenHeader.has(k)) { _seenHeader.add(k); headers.push(k) }
+    }
   }
+  _collectHeaders(testResults.perfomanceSummary)
+  _collectHeaders(testResults.filteredSummary)
+  if (!headers.length) headers.push(...Object.keys(testResults.perfomanceSummary[0]))
 
   let csv = headers.map(header => JSON.stringify(header)).join(',')
   csv += '\n'

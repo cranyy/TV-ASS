@@ -25,6 +25,10 @@ const SEL = {
   timeFrameActive: '#header-toolbar-intervals div[data-role^="button"][class*="isActive"]',
   indicatorScroll: 'div[data-name="indicator-properties-dialog"] div[class^="scrollable-"]',
   indicatorProperty: 'div[data-name="indicator-properties-dialog"] div[class^="content-"] div[class^="cell-"]',
+  // issue#1 (multiple strategies open): dialog-scoped selectors so getStrategyParams can read ONE verified dialog instead of a document-wide query that merges cells from every open indicator-properties-dialog. indicatorTitleInDialog / indicatorPropertyInDialog are RELATIVE (run against a single dialog element).
+  indicatorDialog: '#overlap-manager-root div[data-name="indicator-properties-dialog"]',
+  indicatorTitleInDialog: '[class^="container"] div[class^="title"]',
+  indicatorPropertyInDialog: 'div[class^="content-"] div[class^="cell-"]',
   okBtn: 'div[data-name="indicator-properties-dialog"] div[class^="footer-"] button[name="submit"]',
   // Jun 2026 TV UI removed the dialog header close; use the footer Cancel button (closes without saving)
   cancelBtn: 'div[data-name="indicator-properties-dialog"] div[class^="footer-"] button[name="cancel"]',

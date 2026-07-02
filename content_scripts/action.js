@@ -815,6 +815,15 @@ action.downloadStrategyTestParameters = async () => {
     return
   }
   let paramRange = await storage.getKey(storage.STRATEGY_KEY_PARAM)
+  // issue#1: STRATEGY_KEY_PARAM is a single global raw range map with no per-strategy scoping, so it can hold ranges saved for a DIFFERENT strategy. If any stored key is not an input of the current strategy, do NOT export the stale ranges under this strategy's name — fall back to the current strategy's own range (same key-vs-current-strategy test model.getStrategyParameters uses).
+  const _curParamKeys = Object.keys(strategyData.properties || {})
+  if (paramRange && Object.keys(paramRange).length && _curParamKeys.length) {
+    const _foreign = Object.keys(paramRange).filter(k => !_curParamKeys.includes(k))
+    if (_foreign.length) {
+      await ui.showWarningPopup(`The saved testing parameters include inputs that are not part of the current strategy (${_foreign.slice(0, 6).join(', ')}${_foreign.length > 6 ? '…' : ''}).\n\nExporting the current strategy's own parameters instead of the stored ones.`)
+      paramRange = null
+    }
+  }
   if (!paramRange || !Object.keys(paramRange).length) {
     paramRange = model.getStrategyRange(strategyData)
     if (!paramRange || !Object.keys(paramRange).length) {
@@ -846,6 +855,37 @@ action.clearAll = async () => {
   await ui.showPopup(clearRes && clearRes.length ? `The data was deleted: \n${clearRes.map(item => '- ' + item).join('\n')}` : 'There was no data in the storage')
 }
 
+// issue#1 ("not my params"): STRATEGY_KEY_RESULTS is a single GLOBAL object with no per-strategy scoping, so preview/download/3D-chart can show (or apply) results captured for a DIFFERENT strategy/ticker/timeframe. This mirrors action._getHardOptimizerContext's same strategy/ticker/timeframe test but is read-only and lenient: it only reports a POSITIVE mismatch (both sides known and different), never blocks when the current identity can't be read.
+action._currentResultsContextMatch = async (testResults) => {
+  try {
+    const storedStrategy = (testResults && (testResults.shortName || testResults.name)) || ''
+    const storedTicker   = (testResults && (testResults.ticker || testResults.symbol)) || ''
+    const storedTF       = (testResults && (testResults.timeFrame || testResults.timeframe)) || ''
+    let curStrategy = '', curTicker = '', curTF = ''
+    try { curStrategy = tv._getActiveStrategyName() || '' } catch (e) {}
+    try { curTicker = (await tvChart.getTicker()) || '' } catch (e) {}
+    try { curTF = (await tvChart.getCurrentTimeFrame()) || '' } catch (e) {}
+    const sameStrategy = !storedStrategy || !curStrategy || normalizeTitle(storedStrategy) === normalizeTitle(curStrategy)
+    const sameTicker   = !storedTicker   || !curTicker   || normalizeTitle(storedTicker) === normalizeTitle(curTicker)
+    const sameTF       = !storedTF       || !curTF       || tvChart.correctTF(String(storedTF)) === tvChart.correctTF(String(curTF))
+    return { match: sameStrategy && sameTicker && sameTF, sameStrategy, sameTicker, sameTF,
+             stored: { strategy: storedStrategy, ticker: storedTicker, tf: storedTF },
+             current: { strategy: curStrategy, ticker: curTicker, tf: curTF } }
+  } catch (err) {
+    console.warn('[TV-ASS] results context match check failed:', err)
+    return { match: true, error: true }   // never block the user's own data on an internal error
+  }
+}
+
+// issue#1: human-readable "these results are from another strategy" warning.
+action._resultsMismatchMessage = (m) => {
+  const parts = []
+  if (m && !m.sameStrategy) parts.push(`strategy "${m.stored.strategy}" (chart has "${m.current.strategy || 'unknown'}")`)
+  if (m && !m.sameTicker)   parts.push(`symbol "${m.stored.ticker}" (chart has "${m.current.ticker || 'unknown'}")`)
+  if (m && !m.sameTF)       parts.push(`timeframe "${m.stored.tf}" (chart has "${m.current.tf || 'unknown'}")`)
+  return `These saved results were captured for ${parts.join(', ')}.\n\nThey do NOT match the strategy currently open on the chart, so the parameters shown are not the current strategy's. Re-run the optimizer on the open strategy to get matching results.`
+}
+
 action.previewStrategyTestResults = async () => {
   const testResults = await storage.getKey(storage.STRATEGY_KEY_RESULTS)
   const hasSummary = (testResults && testResults.perfomanceSummary && testResults.perfomanceSummary.length) || (testResults && testResults.summaryChunks && testResults.summaryChunks.length)
@@ -853,6 +893,10 @@ action.previewStrategyTestResults = async () => {
     await ui.showWarningPopup(message.errorsNoBacktest)
     return
   }
+  // issue#1: warn (not silently) when the saved results belong to a different strategy/ticker/timeframe.
+  const _ctx = await action._currentResultsContextMatch(testResults)
+  if (!_ctx.match)
+    await ui.showWarningPopup(action._resultsMismatchMessage(_ctx))
   console.log('previewStrategyTestResults', testResults)
   const { fullSummary, fullFiltered } = await model.buildExportSummaries(testResults)
   const previewResults = { ...testResults, perfomanceSummary: fullSummary, filteredSummary: fullFiltered }
@@ -872,18 +916,24 @@ action.downloadStrategyTestResults = async () => {
   }
   testResults.optParamName = testResults.optParamName || backtest.DEF_MAX_PARAM_NAME
   console.log('downloadStrategyTestResults', testResults)
+  // issue#1: never APPLY foreign stored params onto the open strategy. Only auto-set the best parameters when the stored results actually match the current strategy/ticker/timeframe; on mismatch, warn and still save the (stored-labelled) CSV.
+  const _ctx = await action._currentResultsContextMatch(testResults)
   const { fullSummary, fullFiltered } = await model.buildExportSummaries(testResults)
   const exportResults = { ...testResults, perfomanceSummary: fullSummary, filteredSummary: fullFiltered }
   const CSVResults = file.convertResultsToCSV(exportResults)
-  const bestResult = testResults.perfomanceSummary ? model.getBestResult(testResults) : {}
-  const propVal = {}
-  testResults.paramsNames.forEach(paramName => {
-    if (bestResult.hasOwnProperty(`__${paramName}`))
-      propVal[paramName] = bestResult[`__${paramName}`]
-  })
-  await tv.setStrategyParams(testResults.shortName, propVal)
-  if (bestResult && bestResult.hasOwnProperty(testResults.optParamName))
-    await ui.showPopup(`The best found parameters are set for the strategy\n\nThe best ${testResults.isMaximizing ? '(max) ' : '(min)'} ${testResults.optParamName}: ` + bestResult[testResults.optParamName])
+  if (!_ctx.match) {
+    await ui.showWarningPopup(action._resultsMismatchMessage(_ctx) + `\n\nThe results CSV will still be saved (labelled with the original strategy), but the parameters were NOT applied to the open strategy.`)
+  } else {
+    const bestResult = testResults.perfomanceSummary ? model.getBestResult(testResults) : {}
+    const propVal = {}
+    testResults.paramsNames.forEach(paramName => {
+      if (bestResult.hasOwnProperty(`__${paramName}`))
+        propVal[paramName] = bestResult[`__${paramName}`]
+    })
+    await tv.setStrategyParams(testResults.shortName, propVal)
+    if (bestResult && bestResult.hasOwnProperty(testResults.optParamName))
+      await ui.showPopup(`The best found parameters are set for the strategy\n\nThe best ${testResults.isMaximizing ? '(max) ' : '(min)'} ${testResults.optParamName}: ` + bestResult[testResults.optParamName])
+  }
   file.saveAs(CSVResults, `${testResults.ticker}:${testResults.timeFrame} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}.csv`)
 }
 
@@ -1212,6 +1262,10 @@ action.show3DChart = async () => {
     return
   }
   testResults.optParamName = testResults.optParamName || backtest.DEF_MAX_PARAM_NAME
+  // issue#1: warn (not silently) when the 3D-chart data belongs to a different strategy/ticker/timeframe than the one open on the chart.
+  const _ctx3d = await action._currentResultsContextMatch(testResults)
+  if (!_ctx3d.match)
+    await ui.showWarningPopup(action._resultsMismatchMessage(_ctx3d))
   const { fullSummary: showSummary, fullFiltered: showFiltered } = await model.buildExportSummaries(testResults)
   const showPayload = { ...testResults, perfomanceSummary: showSummary, filteredSummary: showFiltered }
   const eventData = await sendActionMessage(showPayload, 'show3DChart')

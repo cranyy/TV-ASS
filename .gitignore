@@ -4,6 +4,10 @@
 .agents/
 .codex
 
+CLAUDE.md
+AGENTS.md
+GEMINI.md
+
 
 *.tmp.js
 
