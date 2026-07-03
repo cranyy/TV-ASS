@@ -622,30 +622,6 @@ function _resolveMetricKey(data, filterName) {
   return null
 }
 
-function _normalizeThreshold(metric, threshold, filter) {
-  if (!Number.isFinite(threshold))
-    return threshold
-  const absThreshold = Math.abs(threshold)
-  const name = filter && typeof filter.paramName === 'string' ? filter.paramName.toLowerCase() : ''
-  const looksPercent = name.includes('%') || name.includes('percent') || name.includes('profitable')
-  // For percentage metrics, if user entered a whole number (like 10 for 10%), convert to decimal (0.10)
-  if (looksPercent && absThreshold > 1.5)
-    return threshold / 100
-  return threshold
-}
-
-function _normalizeMetric(metric, paramName) {
-  if (typeof metric !== 'number' || !Number.isFinite(metric))
-    return metric
-  const name = typeof paramName === 'string' ? paramName.toLowerCase() : ''
-  const looksPercent = name.includes('%') || name.includes('percent') || name.includes('profitable')
-  const absMetric = Math.abs(metric)
-  // If it's a percentage metric but TV returned it as a whole number (>2), convert to decimal
-  if (looksPercent && absMetric > 2)
-    return metric / 100
-  return metric
-}
-
 function _evaluateSingleFilter(data, filter) {
   if (!filter || !filter.paramName)
     return null
@@ -656,42 +632,31 @@ function _evaluateSingleFilter(data, filter) {
   if (!matchedKey)
     return `Skipped for "${rawKey}": metric not available.`
   const metricRaw = data[matchedKey]
-  const metricCoerced = _coerceNumber(metricRaw)
-  if (!Number.isFinite(metricCoerced))
+  const metric = _coerceNumber(metricRaw)
+  if (!Number.isFinite(metric))
     return `Skipped for "${matchedKey}": ${String(metricRaw)} (metric not numeric).`
-  // Normalize the metric (convert whole-number percentages to decimals if needed)
-  const metric = _normalizeMetric(metricCoerced, matchedKey)
-  const inputThreshold = _coerceNumber(filter.value)
-  if (!Number.isFinite(inputThreshold))
+  const threshold = _coerceNumber(filter.value)
+  if (!Number.isFinite(threshold))
     return `Skipped for "${matchedKey}": ${backtest.convertValue(metric)} (threshold invalid).`
-  const normalizedThreshold = _normalizeThreshold(metric, inputThreshold, filter)
-  if (!Number.isFinite(normalizedThreshold))
-    return `Skipped for "${matchedKey}": ${backtest.convertValue(metric)} (threshold invalid).`
+  // Report metrics and user thresholds share the same units (percent metrics are stored
+  // as whole numbers: 3.26 === 3.26%), so they are compared directly — no rescaling.
+  // A "less than" cap on a metric reported as a negative (legacy drawdown exports,
+  // losing-trade averages) compares magnitudes, so "<= 4" keeps meaning |metric| <= 4.
   let comparisonMetric = metric
-  let comparisonThreshold = normalizedThreshold
-  const suffixParts = []
-  const shouldUseMagnitude = !filter.ascending && metric < 0 && normalizedThreshold >= 0
-  if (shouldUseMagnitude) {
+  let comparisonThreshold = threshold
+  const useMagnitude = !filter.ascending && metric < 0 && threshold >= 0
+  if (useMagnitude) {
     comparisonMetric = Math.abs(metric)
-    comparisonThreshold = Math.abs(normalizedThreshold)
-    suffixParts.push('compared by absolute value')
+    comparisonThreshold = Math.abs(threshold)
   }
   const passes = filter.ascending ? (comparisonMetric >= comparisonThreshold) : (comparisonMetric <= comparisonThreshold)
   if (passes)
     return null
   const requirement = filter.ascending ? '>=' : '<='
-  if (normalizedThreshold !== inputThreshold)
-    suffixParts.unshift('interpreted from input')
-  const suffix = suffixParts.length ? ` (${suffixParts.join('; ')})` : ''
-
-  // Format for display: show percentages as "10.26%" instead of "0.1026"
   const isPercentMetric = matchedKey.includes('%') || matchedKey.toLowerCase().includes('percent') || matchedKey.toLowerCase().includes('profitable')
-  const displayMetric = isPercentMetric ? (comparisonMetric * 100) : comparisonMetric
-  const displayThreshold = isPercentMetric ? (comparisonThreshold * 100) : comparisonThreshold
-  const metricText = backtest.convertValue(displayMetric) + (isPercentMetric ? '%' : '')
-  const thresholdText = backtest.convertValue(displayThreshold) + (isPercentMetric ? '%' : '')
-
-  return `Skipped for "${matchedKey}": ${metricText} (requires ${requirement} ${thresholdText})${suffix}.`
+  const unit = isPercentMetric ? '%' : ''
+  const suffix = useMagnitude ? ' (compared by absolute value)' : ''
+  return `Skipped for "${matchedKey}": ${backtest.convertValue(comparisonMetric)}${unit} (requires ${requirement} ${backtest.convertValue(comparisonThreshold)}${unit})${suffix}.`
 }
 
 function _getFilterFailure(testResults, data) {
@@ -710,18 +675,16 @@ function _inspectFilters(testResults, data) {
     const rawKey = String(filter.paramName)
     const matchedKey = _resolveMetricKey(data, rawKey)
     const metricRaw = matchedKey ? data[matchedKey] : undefined
-    const metricCoerced = matchedKey ? _coerceNumber(metricRaw) : NaN
-    const metric = Number.isFinite(metricCoerced) && matchedKey ? _normalizeMetric(metricCoerced, matchedKey) : metricCoerced
-    const thresholdRaw = filter.value
-    const normalizedThreshold = Number.isFinite(metric) ? _normalizeThreshold(metric, _coerceNumber(thresholdRaw), filter) : NaN
+    const metric = matchedKey ? _coerceNumber(metricRaw) : NaN
+    const threshold = _coerceNumber(filter.value)
 
-    // Apply the same absolute value logic as _evaluateSingleFilter
+    // Apply the same direct-unit comparison and absolute-value logic as _evaluateSingleFilter
     let comparisonMetric = metric
-    let comparisonThreshold = normalizedThreshold
-    const useMagnitude = !filter.ascending && metric < 0 && normalizedThreshold >= 0
+    let comparisonThreshold = threshold
+    const useMagnitude = !filter.ascending && metric < 0 && threshold >= 0
     if (useMagnitude) {
       comparisonMetric = Math.abs(metric)
-      comparisonThreshold = Math.abs(normalizedThreshold)
+      comparisonThreshold = Math.abs(threshold)
     }
 
     const passes = Number.isFinite(comparisonMetric) && Number.isFinite(comparisonThreshold)
@@ -732,8 +695,7 @@ function _inspectFilters(testResults, data) {
       matchedKey,
       metricRaw,
       metric,
-      threshold: thresholdRaw,
-      normalizedThreshold,
+      threshold: filter.value,
       comparison: filter.ascending ? '>=' : '<=',
       usedAbsoluteValue: useMagnitude,
       passes
