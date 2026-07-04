@@ -18,8 +18,10 @@ function normalizeMetricName(name) {
 
   if (s.startsWith('Net P&L')) return 'Net profit'
 
-  // Jun 2026 TV UI renamed the headline report cards ("Total PnL", "Max drawdown", "Profitable trades"); map them to the canonical names the optimizer reads (e.g. "Net profit %") so report keys match
-  if (/^total p(&|n)?l$/i.test(s)) return 'Net profit'        // "Total PnL" / "Total P&L"
+  // Jun 2026 TV UI renamed the headline report cards ("Total PnL", "Max drawdown", "Profitable trades"); map them to the canonical names the optimizer reads so report keys match.
+  // "Total PnL" is NOT "Net profit": the card includes OPEN position P&L (live: card 34.36 = table Net PnL 6.69 + Open P&L 27.67), while the report table's "Net PnL" is closed trades only.
+  // Mapping both to 'Net profit' made the exported value flip between the two depending on which write won — the "final report doesn't match the chart" mismatch. Keep the card under its own key.
+  if (/^total p(&|n)?l$/i.test(s)) return 'Total P&L'         // "Total PnL" / "Total P&L" card (closed + open)
   if (/^max drawdown$/i.test(s)) return 'Max equity drawdown'
   if (/^profitable trades$/i.test(s)) return 'Percent profitable'
 
@@ -2366,10 +2368,83 @@ tv._readSectionTable = (group, report) => {
   return report
 }
 
+// The headline cards are the freshness oracle: the settle gate in getPerformance proved THEY belong to
+// the current backtest, while the section tables can re-render LATER than the cards (issue#2 round 3:
+// "trade numbers / maxdrawdown of cycle N+1 are exactly the chart of cycle N" — table-sourced metrics
+// lagging one cycle). Each anchored table carries a card-backed ": All" row that must agree with the
+// already-parsed card value; disagreement = stale render.
+// Only card/table twins with IDENTICAL semantics qualify as anchors. 'Net profit' does NOT: the card is
+// "Total PnL" (closed + open, kept under its own 'Total P&L' key) while the table's Net PnL is closed-only.
+tv.SECTION_TAB_CARD_ANCHORS = {
+  'returns-summary-table': ['Profit factor: All'],
+  'trades-analysis-table': ['Percent profitable: All'],
+  'drawdowns-table': ['Max equity drawdown: All', 'Max equity drawdown %: All'],
+}
+
+// true = anchors agree (fresh), false = at least one disagrees (stale), null = no anchor overlap (inconclusive)
+tv._sectionAnchorsVerdict = (tabId, partial, cardReport) => {
+  const anchors = tv.SECTION_TAB_CARD_ANCHORS[tabId] || []
+  let seen = false
+  for (const k of anchors) {
+    if (!Object.hasOwn(partial, k) || !Object.hasOwn(cardReport, k)) continue
+    seen = true
+    if (!tv._valuesLooseEqual(partial[k], cardReport[k])) return false
+  }
+  return seen ? true : null
+}
+
+// Fail-closed section read: parse the table into a PARTIAL, accept it only when the card anchors agree
+// (or, for unanchored tables, when two consecutive reads are identical). A table that stays stale or
+// unstable for the whole budget is DROPPED — the row then misses those metrics instead of carrying the
+// previous cycle's values.
+tv._readSectionTableValidated = async (group, tabId, report) => {
+  const budgetMs = 3000, tick = 200
+  let waited = 0
+  let lastSig = null
+  while (true) {
+    const partial = tv._readSectionTable(group, {})
+    if (!Object.keys(partial).length) return { partial, ok: true }   // no table / no rows: nothing to merge
+    const verdict = tv._sectionAnchorsVerdict(tabId, partial, report)
+    if (verdict === true) return { partial, ok: true }
+    if (verdict === null) {
+      const sig = JSON.stringify(partial)
+      if (sig === lastSig) return { partial, ok: true }
+      lastSig = sig
+    }
+    if (verdict === false) {
+      // The table disagrees with the harvest's card baseline — but the CARDS can be the stale side:
+      // the settle gate is fooled when the loading overlay lifts a beat before the cards re-render
+      // (proven live: cards showed the previous cycle while the tables were already fresh). Re-read
+      // the live cards; if they moved vs the baseline, abort so the caller restarts the whole harvest.
+      let freshCards = {}
+      try { freshCards = await tv._parseMetrics({}) } catch {}
+      for (const k of (tv.SECTION_TAB_CARD_ANCHORS[tabId] || [])) {
+        if (Object.hasOwn(freshCards, k) && Object.hasOwn(report, k) && !tv._valuesLooseEqual(freshCards[k], report[k])) {
+          const err = new Error('cards re-rendered mid-harvest (stale cards at settle)')
+          err.__cardsMoved = true
+          throw err
+        }
+      }
+    }
+    if (waited >= budgetMs)
+      return { partial, ok: false, reason: verdict === false ? 'stale (card anchors disagree)' : 'unstable while parsing' }
+    await page.waitForTimeout(tick)
+    waited += tick
+  }
+}
+
+tv._noteDroppedSection = (report, groupTitle, tabId, reason) => {
+  const note = `Section "${groupTitle || tabId}" not recorded: ${reason}.`
+  console.warn(`[TV-ASS] ${note}`)
+  report['comment'] = report['comment'] ? `${report['comment']} ${note}` : note
+}
+
 // canonical metric BASE (side/percent stripped) -> the sub-tab id whose table holds it. Built from the
 // live Jun-2026 report (E3) so a TARGETED parse clicks ONLY the sub-tab holding the needed metric (AC#4).
-// Card-backed metrics (Net profit / Percent profitable / Profit factor / Max equity drawdown) are resolved
-// by _parseMetrics BEFORE any click, so those entries here are used only when a Long/Short variant is needed.
+// Card-backed metrics (Percent profitable / Profit factor / Max equity drawdown) are resolved by
+// _parseMetrics BEFORE any click, so those entries here are used only when a Long/Short variant is needed.
+// 'Net profit' always resolves from the returns table (the "Total PnL" card is a different quantity —
+// closed + open P&L — stored separately as 'Total P&L').
 // An unmapped base falls through to the bounded last-resort pass in parseReportTable (never a per-cycle full scan).
 tv.METRIC_SECTION_TAB = {
   'net profit': 'returns-summary-table',
@@ -2421,6 +2496,9 @@ tv._sectionTabIdForMetric = (name) => tv.METRIC_SECTION_TAB[tv._metricBase(name)
 // fallback pass), waits until THAT tab is actually selected before reading (never parse the previous tab's stale
 // rows), then RESTORES the block's ORIGINAL selection — including "Overview" (strategy-report-summary), so the
 // user's view never churns. neededRemaining (a Set) shrinks as metrics resolve, so a card-backed target => 0 clicks.
+// Every table read goes through tv._readSectionTableValidated: a section whose card anchors disagree with the
+// settled headline cards (a late/stale re-render) is re-read within a bounded budget and DROPPED if still stale,
+// so table-sourced metrics can never lag one cycle behind the cards in the recorded row.
 tv._parseMetricSectionGroup = async (group, report, parsedTabs, opts) => {
   const { fullHarvest = false, allowedTabIds = null, neededRemaining = null, allowFallback = false } = opts || {}
   const groupTitle = tv._getMetricGroupTitle(group)
@@ -2435,7 +2513,9 @@ tv._parseMetricSectionGroup = async (group, report, parsedTabs, opts) => {
   if (selectedDetail) {
     const selKey = `${groupTitle}::${selectedDetail.id}`
     if (!parsedTabs.has(selKey)) {
-      report = tv._readSectionTable(group, report)
+      const read = await tv._readSectionTableValidated(group, selectedDetail.id, report)
+      if (read.ok) Object.assign(report, read.partial)
+      else tv._noteDroppedSection(report, groupTitle, selectedDetail.id, read.reason)
       parsedTabs.add(selKey)
       if (neededRemaining) for (const k of [...neededRemaining]) if (Object.hasOwn(report, k)) neededRemaining.delete(k)
     }
@@ -2462,7 +2542,9 @@ tv._parseMetricSectionGroup = async (group, report, parsedTabs, opts) => {
     }
     if (became) {
       await page.waitForTimeout(80)   // brief settle so the new table's rows are populated
-      report = tv._readSectionTable(group, report)
+      const read = await tv._readSectionTableValidated(group, tabBtn.id, report)
+      if (read.ok) Object.assign(report, read.partial)
+      else tv._noteDroppedSection(report, groupTitle, tabBtn.id, read.reason)
       if (neededRemaining) for (const k of [...neededRemaining]) if (Object.hasOwn(report, k)) neededRemaining.delete(k)
     }
     parsedTabs.add(tabKey)   // mark attempted either way so the bounded fallback never re-clicks a flaky tab
@@ -2497,34 +2579,47 @@ tv.parseReportTable = async (neededMetrics = null) => {
     }
   }
 
+  // Bounded consistency loop: when a section read proves the CARDS re-rendered after the settle
+  // gate (cards-moved abort from tv._readSectionTableValidated), throw the mixed snapshot away and
+  // re-harvest everything from the now-current cards, so a recorded row can never blend two cycles.
   let report = {}
-  report = await tv._parseMetrics(report)
+  for (let harvestAttempt = 0; ; harvestAttempt++) {
+    report = {}
+    report = await tv._parseMetrics(report)
 
-  try {
-    const fullHarvest = neededMetrics === null
-    const parsedTabs = new Set()
-    const groups = tv._getMetricSectionGroups()
-    if (fullHarvest) {
-      for (const group of groups)
-        report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { fullHarvest: true })
-    } else {
-      const neededRemaining = new Set((neededMetrics || []).filter(Boolean).filter(k => !Object.hasOwn(report, k)))
-      // map each still-missing needed metric to the ONE sub-tab that holds it (AC#4: click only those)
-      const allowedTabIds = new Set()
-      for (const k of neededRemaining) { const id = tv._sectionTabIdForMetric(k); if (id) allowedTabIds.add(id) }
-      // PASS A — read every rendered table free + click ONLY the mapped sub-tabs
-      for (const group of groups)
-        report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { allowedTabIds, neededRemaining })
-      // PASS B — bounded last-resort, ONLY if a needed metric is still missing; stops as soon as all needed resolve
-      if (neededRemaining.size > 0) {
-        for (const group of groups) {
-          if (neededRemaining.size === 0) break
-          report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { neededRemaining, allowFallback: true })
+    try {
+      const fullHarvest = neededMetrics === null
+      const parsedTabs = new Set()
+      const groups = tv._getMetricSectionGroups()
+      if (fullHarvest) {
+        for (const group of groups)
+          report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { fullHarvest: true })
+      } else {
+        const neededRemaining = new Set((neededMetrics || []).filter(Boolean).filter(k => !Object.hasOwn(report, k)))
+        // map each still-missing needed metric to the ONE sub-tab that holds it (AC#4: click only those)
+        const allowedTabIds = new Set()
+        for (const k of neededRemaining) { const id = tv._sectionTabIdForMetric(k); if (id) allowedTabIds.add(id) }
+        // PASS A — read every rendered table free + click ONLY the mapped sub-tabs
+        for (const group of groups)
+          report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { allowedTabIds, neededRemaining })
+        // PASS B — bounded last-resort, ONLY if a needed metric is still missing; stops as soon as all needed resolve
+        if (neededRemaining.size > 0) {
+          for (const group of groups) {
+            if (neededRemaining.size === 0) break
+            report = await tv._parseMetricSectionGroup(group, report, parsedTabs, { neededRemaining, allowFallback: true })
+          }
         }
       }
+      break
+    } catch (e) {
+      if (e && e.__cardsMoved && harvestAttempt < 2) {
+        console.info('[TV-ASS] cards re-rendered mid-harvest — re-harvesting the full report (attempt ' + (harvestAttempt + 2) + ')')
+        await page.waitForTimeout(400)
+        continue
+      }
+      console.log('[TV-ASS] ISSUE015 section harvest error:', e && e.message ? e.message : e)
+      break
     }
-  } catch (e) {
-    console.log('[TV-ASS] ISSUE015 section harvest error:', e && e.message ? e.message : e)
   }
 
   let foundDataQaIdTables = false
@@ -2681,8 +2776,13 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
     const isEmpty = sig === '__EMPTY__'                                           // explicit no-trade result (valid settled state)
     // '__EMPTY__' ("This report requires trade data") is a TERMINAL TV state, not a loading state (the overlay/"Updating report" branch above already waits through the real recompute and is checked first each tick), and it carries no numbers — so an empty report settles a mutation read too. Otherwise a no-trade config (empty-after-empty) could never settle → 8s error-3 timeout → retry → hang.
     const observedUpdate = sawLoading || changed || isEmpty
+    // overlay-only settles (loading seen but the values never changed) get a longer stability window:
+    // the cards can re-render a beat AFTER the overlay lifts, and 100ms of stale-card stability was
+    // enough to settle on the previous cycle's numbers. 300ms gives the late re-render room to move
+    // the signature (which resets `stable` above) before old cards are accepted as the result.
+    const needStable = (expectChange && sawLoading && !changed && !isEmpty) ? 3 : 1
     // baseline read: stable-present is enough; mutation read: observed an update (overlay/"Updating report" seen, or value changed) OR a terminal no-trade empty state — never accept stale NON-empty cards (stale-card protection preserved for cards that carry numbers)
-    if (stable >= 1 && (!expectChange || observedUpdate)) {
+    if (stable >= needStable && (!expectChange || observedUpdate)) {
       tv._lastReportSignature = sig
       return diag({ settled: true, reason: 'settled', empty: isEmpty })
     }
@@ -2739,6 +2839,11 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
   if (!isProcessError) {
     // Always harvest the full metric set so the exported final report is complete (every report metric, not just the optimization target + filters).
     reportData = await tv.parseReportTable(null)
+    // Re-baseline the settle signature to the FINAL rendered state. The gate can settle on cards that
+    // re-render a beat after the loading overlay lifts (the harvest recovers via the cards-moved
+    // restart); without this refresh the next cycle "changes" against that stale baseline and settles
+    // instantly on THIS cycle's report — a self-sustaining one-cycle lag on every recorded row.
+    try { tv._lastReportSignature = tv._reportSignature() } catch {}
   }
 
   if (!isProcessError && !isProcessEnd && testResults.perfomanceSummary.length) {
