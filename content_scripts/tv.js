@@ -1731,7 +1731,11 @@ tv._openStrategyParamsByStrategyDoubleClickBy = async (indicatorTitle) => {
   const indicatorLegendsEl = document.querySelectorAll(SEL.tvLegendIndicatorItem)
   if (!indicatorLegendsEl)
     return false
-  for (let indicatorItemEl of indicatorLegendsEl) {
+  // Same title can appear on several legend rows (duplicate strategy copies); the Tester reports on the
+  // "Active strategy". Try the active copy FIRST so we edit the strategy whose report we actually read.
+  const ordered = [...indicatorLegendsEl].sort((a, b) =>
+    (b.querySelector(SEL.legendActiveStrategyMarker) ? 1 : 0) - (a.querySelector(SEL.legendActiveStrategyMarker) ? 1 : 0))
+  for (let indicatorItemEl of ordered) {
     const indicatorTitleEl = indicatorItemEl.querySelector(SEL.tvLegendIndicatorItemTitle)
     if (!indicatorTitleEl)
       continue
@@ -1777,12 +1781,21 @@ tv._openStrategyParamsByLegendSettings = async (indicatorTitle) => {
   let targetItem = null
   let expectedTitle = null
   if (indicatorTitle) {
+    // A chart can carry several strategies with the SAME title (duplicate copies). The Strategy Tester
+    // reports on exactly ONE of them — the one flagged "Active strategy". Editing any other same-named
+    // copy commits values that never move the report we read, so every cycle fails to settle
+    // ("No report update signal … after the parameter change"). Collect ALL title matches and open the
+    // ACTIVE one; fall back to the first match only when none is marked active.
+    const matches = []
     for (const it of items) {
       const t = it.querySelector(SEL.tvLegendIndicatorItemTitle)
-      if (t && normalizeTitle(t.innerText) === normalizeTitle(indicatorTitle)) { targetItem = it; break }
+      if (t && normalizeTitle(t.innerText) === normalizeTitle(indicatorTitle)) matches.push(it)
     }
-    if (!targetItem)
+    if (!matches.length)
       return false // requested a specific strategy that is not in the legend — let other methods try
+    targetItem = matches.find(it => it.querySelector(SEL.legendActiveStrategyMarker)) || matches[0]
+    if (matches.length > 1 && !matches.some(it => it.querySelector(SEL.legendActiveStrategyMarker)))
+      console.warn(`[TV-ASS] ${matches.length} strategies titled "${indicatorTitle}" are on the chart but none is the Tester's "Active strategy"; editing the first copy — the report may belong to a different one. Remove the duplicate, or click the intended strategy so it becomes the active one in the Strategy Tester.`)
     expectedTitle = indicatorTitle
   } else {
     for (const it of items) {

@@ -86,7 +86,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped/cloned to in Step 2. 
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.117
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.118
 
 
 
@@ -118,7 +118,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped to/cloned to in step 2.
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.117
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.118
 
 
 ## Good to know
