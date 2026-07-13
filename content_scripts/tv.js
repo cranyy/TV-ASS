@@ -645,6 +645,23 @@ tv.getPropertiesParams = async () => {
       i++
       if (i >= indicProperties.length)
         break
+      const pairedInput = indicProperties[i].querySelector('input:not([type="checkbox"])')
+      const pairedCombo = indicProperties[i].querySelector('button[role="combobox"]')
+      if (pairedInput && pairedCombo) {
+        // Jul-2026 rows merge a value input with a unit/currency combobox in one control cell
+        // (Initial capital + currency, Default order size + unit, Commission + unit) — capture both
+        // as {value, type} so exports round-trip; a plain-value read here silently drops the unit.
+        let numVal = pairedInput.value
+        if (pairedInput.getAttribute('inputmode') === 'numeric' || parseFloat(numVal) == numVal || parseInt(numVal) == numVal) {
+          const dig = parseFloat(numVal) == parseInt(numVal) ? parseInt(numVal) : parseFloat(numVal)
+          // coerce only when the RAW text parses cleanly — parseInt("5,000") is 5, so a
+          // thousands-separated value must stay a string exactly like the plain-input branch below
+          if (!isNaN(numVal))
+            numVal = dig
+        }
+        properties[propText] = { value: numVal, type: pairedCombo.innerText || '' }
+        continue
+      }
       if (indicProperties[i].querySelector('input')) {
         let propValue = indicProperties[i].querySelector('input').value
         if (indicProperties[i].querySelector('input').getAttribute('inputmode') === 'numeric' ||
@@ -683,9 +700,137 @@ tv.getPropertiesParams = async () => {
   return { properties, unresolved }
 }
 
+// Set a dialog combobox to the option with the given visible text. Standard comboboxes render a
+// [role="listbox"] with [role="option"] rows (setSelByText). The Jul-2026 currency dropdown renders a
+// menu-style listbox instead: rows are div[class*="button-"] with a [class*="title-"] label and a
+// "SHOW MORE" expander for the long tail — no [role="option"] at all, so setSelByText can never match it.
+// Try the standard path first, then the menu path (expanding once); close the menu on failure so the
+// dialog is never left with a stray popup.
+tv._setComboboxByText = async (buttonEl, text) => {
+  const target = String(text)
+  if ((buttonEl.innerText || '').trim() === target)
+    return true
+  page.mouseClick(buttonEl)
+  if (await page.setSelByText(SEL.strategyListOptions, target))
+    return true
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const listbox = document.querySelector('div[role="listbox"]')
+    if (!listbox)
+      break
+    let expander = null
+    for (const row of listbox.querySelectorAll('div[class*="button-"], button')) {
+      const title = row.querySelector('[class*="title-"]')
+      const label = (title ? title.innerText : row.innerText) || ''
+      if (label.trim() === target) {
+        page.mouseClick(row)
+        await page.waitForTimeout(200)
+        return true
+      }
+      if (/show more/i.test(label))
+        expander = row
+    }
+    if (!expander)
+      break
+    page.mouseClick(expander)
+    await page.waitForTimeout(300)
+  }
+  if (document.querySelector('div[role="listbox"]'))
+    page.mouseClick(buttonEl)   // toggle the abandoned menu closed
+  return false
+}
+
+// TradingView's Jul-2026 Properties tab removed four rows that older saved payloads still carry.
+// Translate each legacy key to its replacement ONLY when the legacy row is absent from the open dialog
+// and the replacement row is present, so an A/B-served old dialog keeps the exact-label path untouched:
+//   "Base currency" (USD/"Default")            -> currency combobox merged into the "Initial capital" row
+//   "Margin for long/short positions" (m %)    -> "Long/Short leverage" = 100 / m  (5% margin = 20x)
+//   "Verify price for limit orders" (N ticks)  -> "Limit order execution": 0 -> "Requested price",
+//                                                 >0 -> "Requested price and 1 tick beyond" (TV caps at 1 tick)
+// An explicit payload entry for a replacement row always wins over a migrated value.
+tv._migrateLegacyProperties = (propValues, dialogLabels) => {
+  const src = Object.assign({}, propValues)
+  const migrated = []
+  const skipped = []
+  const has = (k) => Object.prototype.hasOwnProperty.call(src, k)
+  const canMigrate = (fromKey, toKey) => has(fromKey) && !dialogLabels.has(fromKey) && dialogLabels.has(toKey)
+
+  if (canMigrate('Base currency', 'Initial capital')) {
+    const raw = String(src['Base currency']).trim()
+    const currency = /^default$/i.test(raw) ? 'Same as chart' : raw
+    const cap = has('Initial capital') ? src['Initial capital'] : undefined
+    if (cap !== null && typeof cap === 'object' && !Array.isArray(cap)) {
+      skipped.push('Base currency (Initial capital already carries a currency)')
+    } else {
+      src['Initial capital'] = { value: cap, type: currency }
+      migrated.push(`Base currency → Initial capital currency (${currency})`)
+    }
+    delete src['Base currency']
+  }
+
+  for (const [fromKey, toKey] of [['Margin for long positions', 'Long leverage'], ['Margin for short positions', 'Short leverage']]) {
+    if (!canMigrate(fromKey, toKey))
+      continue
+    const marginPct = Number(src[fromKey])
+    delete src[fromKey]
+    if (has(toKey)) {
+      skipped.push(`${fromKey} (payload already sets ${toKey})`)
+    } else if (!Number.isFinite(marginPct) || marginPct <= 0) {
+      skipped.push(`${fromKey} (${marginPct}% has no finite leverage equivalent)`)
+    } else {
+      const leverage = Math.round((100 / marginPct) * 100) / 100
+      src[toKey] = leverage
+      migrated.push(`${fromKey} (${marginPct}%) → ${toKey} (${leverage}x)`)
+    }
+  }
+
+  if (canMigrate('Verify price for limit orders', 'Limit order execution')) {
+    const ticks = Number(src['Verify price for limit orders'])
+    delete src['Verify price for limit orders']
+    if (has('Limit order execution')) {
+      skipped.push('Verify price for limit orders (payload already sets Limit order execution)')
+    } else {
+      const option = ticks > 0 ? 'Requested price and 1 tick beyond' : 'Requested price'
+      src['Limit order execution'] = option
+      migrated.push(`Verify price for limit orders (${ticks}) → Limit order execution (${option})` +
+        (ticks > 1 ? ' — TradingView now verifies at most 1 tick' : ''))
+    }
+  }
+
+  return { propValues: src, migrated, skipped }
+}
+
+// Apply a {value, type} payload entry to one control cell (value input + unit/currency combobox).
+// Tolerant halves: only the controls the cell actually renders must succeed — an undefined half or a
+// control the row doesn't have (old-UI input-only rows) is not a failure, but a cell with no controls is.
+tv._applyValueTypeCell = async (controlCell, targetVal) => {
+  const inputs = controlCell.querySelectorAll('input:not([type="checkbox"])')
+  const comboboxes = controlCell.querySelectorAll('button[role="combobox"]')
+  let inputOk = true
+  let dropdownOk = true
+  if (inputs.length > 0 && targetVal.value !== undefined && targetVal.value !== null) {
+    page.setInputElementValue(inputs[0], targetVal.value)
+  } else if (inputs.length === 0 && targetVal.value !== undefined && targetVal.value !== null) {
+    inputOk = false
+  }
+  if (comboboxes.length > 0 && targetVal.type !== undefined && targetVal.type !== null && targetVal.type !== '') {
+    dropdownOk = await tv._setComboboxByText(comboboxes[0], targetVal.type)
+  } else if (comboboxes.length === 0 && targetVal.type) {
+    dropdownOk = false
+  }
+  return inputOk && dropdownOk && (inputs.length > 0 || comboboxes.length > 0)
+}
+
 tv.setPropertiesParams = async (propValues) => {
   if (!propValues || typeof propValues !== 'object')
-    return { applied: [], missing: [], failed: [] }
+    return { applied: [], missing: [], failed: [], migrated: [], skippedLegacy: [] }
+  const dialogLabels = new Set()
+  for (const cell of document.querySelectorAll(SEL.indicatorProperty)) {
+    const t = (cell.innerText || '').trim()
+    if (t)
+      dialogLabels.add(t)
+  }
+  const migration = tv._migrateLegacyProperties(propValues, dialogLabels)
+  propValues = migration.propValues
   let popupVisibleHeight = 917
   try {
     popupVisibleHeight = page.$(SEL.indicatorScroll)?.getBoundingClientRect()?.bottom || 917
@@ -722,23 +867,7 @@ tv.setPropertiesParams = async (propValues) => {
 
       if (targetVal && typeof targetVal === 'object' && !Array.isArray(targetVal)) {
         if (targetVal.hasOwnProperty('value') && targetVal.hasOwnProperty('type')) {
-          const inputs = controlCell.querySelectorAll('input:not([type="checkbox"])')
-          const comboboxes = controlCell.querySelectorAll('button[role="combobox"]')
-          let inputOk = false
-          let dropdownOk = false
-          if (inputs.length > 0) {
-            page.setInputElementValue(inputs[0], targetVal.value)
-            inputOk = true
-          }
-          if (comboboxes.length > 0) {
-            if (comboboxes[0].innerText === targetVal.type) {
-              dropdownOk = true
-            } else {
-              page.mouseClick(comboboxes[0])
-              dropdownOk = await page.setSelByText(SEL.strategyListOptions, targetVal.type)
-            }
-          }
-          success = inputOk && dropdownOk
+          success = await tv._applyValueTypeCell(controlCell, targetVal)
         } else {
           // Grouped checkboxes — track each child individually
           const checkboxes = controlCell.querySelectorAll('input[type="checkbox"]')
@@ -770,14 +899,8 @@ tv.setPropertiesParams = async (propValues) => {
           success = true
         } else {
           const comboboxes = controlCell.querySelectorAll('button[role="combobox"]')
-          if (comboboxes.length > 0) {
-            if (comboboxes[0].innerText === String(targetVal)) {
-              success = true
-            } else {
-              page.mouseClick(comboboxes[0])
-              success = await page.setSelByText(SEL.strategyListOptions, String(targetVal))
-            }
-          }
+          if (comboboxes.length > 0)
+            success = await tv._setComboboxByText(comboboxes[0], targetVal)
         }
       }
 
@@ -809,19 +932,21 @@ tv.setPropertiesParams = async (propValues) => {
         failed.push(propText)
         break
       }
-      let inputEl = indicProperties[i].querySelector('input')
-      if (inputEl) {
-        page.setInputElementValue(inputEl, propValues[propText])
-        success = true
+      const firstVal = propValues[propText]
+      if (firstVal && typeof firstVal === 'object' && !Array.isArray(firstVal) && firstVal.hasOwnProperty('value') && firstVal.hasOwnProperty('type')) {
+        // Jul-2026 rows pair a value input with a unit/currency combobox under a first- label
+        // (Initial capital + currency, …) — writing the raw object into the input would type
+        // "[object Object]" and silently skip the combobox
+        success = await tv._applyValueTypeCell(indicProperties[i], firstVal)
       } else {
-        let buttonEl = indicProperties[i].querySelector('button[role="combobox"]')
-        if (buttonEl?.innerText) {
-          if (buttonEl.innerText === propValues[propText]) {
-            success = true
-          } else {
-            page.mouseClick(buttonEl)
-            success = await page.setSelByText(SEL.strategyListOptions, propValues[propText])
-          }
+        let inputEl = indicProperties[i].querySelector('input')
+        if (inputEl) {
+          page.setInputElementValue(inputEl, firstVal)
+          success = true
+        } else {
+          let buttonEl = indicProperties[i].querySelector('button[role="combobox"]')
+          if (buttonEl?.innerText)
+            success = await tv._setComboboxByText(buttonEl, firstVal)
         }
       }
     } else if (propClassName.includes('fill-')) {
@@ -845,7 +970,7 @@ tv.setPropertiesParams = async (propValues) => {
   }
 
   const missing = propKeys.filter(key => !encountered.has(key))
-  return { applied, missing, failed }
+  return { applied, missing, failed, migrated: migration.migrated, skippedLegacy: migration.skipped }
 }
 
 tv.applyInputParams = async (propVal) => {
@@ -2015,9 +2140,12 @@ tv.checkIsNewVersion = async (timeout = 1000) => {
 
 // Jun 2026 TV UI: the [data-name="backtesting"] tester-tab selectors and #bottom-area strategyCaption are gone, so the old code wasted ~10s/cycle on two 5s timeouts. The report panel now renders by default; if it's present (strategyReportContainer / metricsTab), return immediately without touching tabs. Legacy fallback kept for older UIs with short timeouts and no throw.
 tv.openStrategyTab = async (isDeepTest = false) => {
-  // Fast path (current UI): report panel already open → nothing to activate, and don't switch the visible tab
-  if (page.$(SEL.strategyReportContainer) || page.$(SEL.metricsTab))
+  // Fast path (current UI): report panel already open. Still make sure the report VIEW is the active
+  // light-tab — with "List of Trades" selected the metric DOM is unmounted and nothing downstream can read.
+  if (page.$(SEL.strategyReportContainer) || page.$(SEL.metricsTab)) {
+    try { await tv._ensureMetricsViewActive() } catch {}
     return true
+  }
   // Legacy fallback: activate the Strategy Tester tab (short timeouts; do not throw — non-fatal to callers)
   let isStrategyActiveEl = await page.waitForSelector(SEL.strategyTesterTabActive, 1500)
   if (!isStrategyActiveEl) {
@@ -2052,6 +2180,7 @@ tv.switchToStrategyTabAndSetObserveForReport = async (isDeepTest = false, knownN
   testResults.name = activeStrategyName
 
   try { await tv._ensureReportPanelOpen() } catch {}
+  try { await tv._ensureMetricsViewActive() } catch {}
   try { tv._lastReportSignature = tv._reportSignature() } catch { tv._lastReportSignature = null }
 
   // const reportEl = await page.waitForSelector(SEL.strategyReportObserveArea, 10000)
@@ -2488,11 +2617,27 @@ tv.METRIC_SECTION_TAB = {
   'sharpe ratio': 'risk-adjusted-performance-table',
   'sortino ratio': 'risk-adjusted-performance-table',
   'max equity run-up': 'run-ups-table',
+  'average run-up (close-to-close)': 'run-ups-table',
+  'max run-up (close-to-close)': 'run-ups-table',
   'return of max drawdown': 'drawdowns-table',
+  'average drawdown (close-to-close)': 'drawdowns-table',
+  'max drawdown (close-to-close)': 'drawdowns-table',
+  'max drawdown (intrabar)': 'drawdowns-table',
+  'max drawdown as % of initial capital (intrabar)': 'drawdowns-table',
+  'largest profit as % of gross profit': 'trades-analysis-table',
+  'largest loss as % of gross loss': 'trades-analysis-table',
+  'outliers p&l': 'trades-analysis-table',
+  'annualized return (cagr)': 'capital-usage-table',
+  'return on initial capital': 'capital-usage-table',
+  'account size required': 'capital-usage-table',
+  'return on account size required': 'capital-usage-table',
+  'net pnl as % of largest loss': 'capital-usage-table',
   'margin calls': 'margin-usage-table',
   'max margin used': 'margin-usage-table',
   'average margin used': 'margin-usage-table',
   'margin efficiency': 'margin-usage-table',
+  'total liquidated volume': 'margin-usage-table',
+  'largest liquidated volume': 'margin-usage-table',
 }
 
 tv._metricBase = (name) => String(name || '')
@@ -2817,8 +2962,31 @@ tv._ensureReportPanelOpen = async () => {
   return false
 }
 
+// Jul-2026 tester header: "Strategy report" / "List of Trades" are icon-only view tabs at the left of the
+// toolbar. With "List of Trades" active the headline cards and metric tables are UNMOUNTED, so
+// _reportSignature() returns '' forever and every settle can only end in the update-no-effect timeout.
+// Select the report view and wait for a metrics-specific readiness signal: a non-empty signature (cards
+// rendered, or the '__EMPTY__' no-trades sentinel). Tab-active alone is NOT readiness — the report DOM
+// mounts a beat after the switch. No-op when already active or when the tabs don't exist (older UIs).
+tv._ensureMetricsViewActive = async () => {
+  if (page.$(SEL.metricsTabActive))
+    return true
+  const tabEl = page.$(SEL.metricsTab)
+  if (!tabEl)
+    return false
+  page.mouseClick(tabEl)
+  const active = await page.waitForSelector(SEL.metricsTabActive, 2000)
+  for (let waited = 0; waited < 2000; waited += 100) {
+    if (tv._reportSignature())
+      return true
+    await page.waitForTimeout(100)
+  }
+  return !!active
+}
+
 tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = true) => {
   await tv._ensureReportPanelOpen()
+  await tv._ensureMetricsViewActive()
   // MANDATORY fail-closed settle gate: wait for the report to actually update (loading overlay seen OR report-signature change vs the previous cycle), then stabilise. If it does NOT settle in the window, return error 3 with EMPTY data — NEVER parse the stale visible cards. backtest.js retries on error 3, so a slow report gets more attempts before being skipped.
   const settleRes = await tv._waitReportSettled(testResults, expectChange)
   if (!settleRes.settled) {
@@ -2826,7 +2994,7 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
     const secs = (ms) => Math.round((ms || 0) / 1000)
     const detail =
       s.reason === 'active-timeout'   ? `TradingView was still recomputing the report after ${secs(s.totalElapsed)}s (active recompute exceeded the ${secs(s.activeHardCapMs)}s safety cap).` :
-      s.reason === 'update-no-effect' ? `The "Update report" button was clicked but no report update followed within ${secs(s.idleElapsed)}s.` :
+      s.reason === 'update-no-effect' ? `The "Update report" button was clicked but no report update followed within ${secs(s.idleElapsed)}s. If the Strategy Tester is showing "List of trades", switch it to the report view (left toolbar toggle).` :
                                         `No report update signal (no loading overlay, no value change) within ${secs(s.idleElapsed)}s after the parameter change.`
     return {
       error: 3,

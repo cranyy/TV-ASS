@@ -86,7 +86,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped/cloned to in Step 2. 
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.118
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.119
 
 
 
@@ -118,7 +118,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped to/cloned to in step 2.
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.118
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.119
 
 
 ## Good to know
@@ -131,3 +131,19 @@ Thats it you can use the new one as normal now, it will be called TV-ASS 1.118
 ## Credits & License
 
 Built entirely on the original TradingView Assistant by Andrei Kuminov (akumidv). See the included [LICENSE](LICENSE).
+
+---
+
+## CHANGELOG
+
+### 1.119 — TradingView moved the furniture again (July 2026)
+
+TradingView redesigned the strategy Properties tab and the Strategy Tester panel, which quietly broke a couple of things. This version adapts to all of it:
+
+- **Old saved runs upload cleanly again** — TradingView removed four rows from the Properties tab: "Base currency" now lives as a little dropdown next to Initial capital, "Margin for long/short positions" got replaced by "Long/Short leverage", and "Verify price for limit orders" became a "Limit order execution" dropdown. So every time you uploaded an older saved run you'd get slapped with *"Properties not found (4): Base currency, Verify price for limit orders, Margin for long positions, Margin for short positions"* — even though nothing was actually wrong with your file.
+Now the extension translates your old files to the new layout on the fly — e.g. Margin 5% becomes Long leverage 20x (same thing, different units), and it TELLS you what it mapped in the upload summary instead of erroring. New saves also remember the currency and units properly now, which the old scraper silently dropped.
+One honest caveat: TradingView reduced "verify price for limit orders" from any-number-of-ticks to a simple "1 tick beyond" option, so if your old file had it set above 1, the closest possible thing is applied and you get a note about it.
+
+- **Fixed the endless "Backtesting report did not settle" error** — the Strategy Tester now has a little icon toggle on the left (report view vs List of trades). If it was sitting on List of trades, the report data literally doesn't exist on the page, so every single cycle would blow up with *"The 'Update report' button was clicked but no report update followed within 45s"*. The extension now just flips itself back to the report view before reading, so you can leave the panel however you want.
+
+- **CAGR and ~50 more metrics as optimization targets and filters** — TradingView's new report exposes a bunch of metrics we simply never listed: Annualized return (CAGR), Expected payoff, Strategy outperformance, the whole close-to-close run-up/drawdown family, Return on initial capital, Net PnL as % of largest loss, margin usage stuff, and more. All of them are now selectable both as the thing you maximize AND in the two filters. A couple were deliberately left out (the duration ones like "Average drawdown duration") because TradingView renders them as text like "21h 30m" and they don't compare as clean numbers.

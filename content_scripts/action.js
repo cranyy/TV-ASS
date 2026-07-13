@@ -504,6 +504,10 @@ action._hardImportHandler = async (payload, fileName) => {
 
   if (totalApplied > 0)
     parts.push(`Applied: ${totalPropsApplied} properties, ${totalInputsApplied} inputs`)
+  if (propsResult.migrated && propsResult.migrated.length)
+    parts.push(`Legacy properties auto-mapped to the new TradingView dialog (${propsResult.migrated.length}): ${propsResult.migrated.join('; ')}`)
+  if (propsResult.skippedLegacy && propsResult.skippedLegacy.length)
+    parts.push(`Legacy properties skipped (${propsResult.skippedLegacy.length}): ${propsResult.skippedLegacy.join('; ')}`)
   if (totalPropsMissing > 0)
     parts.push(`Properties not found in dialog (${totalPropsMissing}): ${propsResult.missing.slice(0, 15).join(', ')}`)
   if (totalPropsFailed > 0)
@@ -761,6 +765,11 @@ action._restoreRunContextFromMeta = async (meta, inputsPropVal, fileName, strate
   //   limitations  = known-unautomatable fields (plot colors: TradingView's picker cannot be driven programmatically) and capture-quality notes -> EXPLICITLY LISTED, but in a GREEN success popup (wording avoids file.upload's error keywords). Acceptance 3a forbids a green popup that SILENTLY hides unapplied Style fields — listing them explicitly satisfies it; a red "Error" box on a fully-successful restore was wrong.
   const issues = []
   const limitations = []
+  // legacy->new dialog property translations are successful applies with provenance, not errors; a
+  // skipped legacy key (no representable equivalent) is a TradingView capability change, so it is
+  // listed explicitly but does not turn the popup red
+  if (propsResult.migrated && propsResult.migrated.length) limitations.push(`Legacy properties auto-mapped to the new TradingView dialog (${propsResult.migrated.length}): ${propsResult.migrated.join('; ')}`)
+  if (propsResult.skippedLegacy && propsResult.skippedLegacy.length) limitations.push(`Legacy properties skipped (${propsResult.skippedLegacy.length}): ${propsResult.skippedLegacy.join('; ')}`)
   if (propsResult.missing.length) issues.push(`Properties not found (${propsResult.missing.length}): ${propsResult.missing.slice(0, 12).join(', ')}`)
   if (propsResult.failed.length) issues.push(`Properties failed (${propsResult.failed.length}): ${propsResult.failed.slice(0, 12).join(', ')}`)
   if (inputsResult.missing.length) issues.push(`Inputs not found (${inputsResult.missing.length}): ${inputsResult.missing.slice(0, 12).join(', ')}`)
