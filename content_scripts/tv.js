@@ -1653,19 +1653,38 @@ tv.setTicker = async (tickerFull) => {
       return false
     }
     page.setInputElementValue(input, target, true)
-    await page.waitForTimeout(700)
+    // The category-filter tabs are STICKY across dialog opens; any non-"All" tab filters the
+    // target out of the results (e.g. XAGUSD under "Stocks" -> 0 matches), so ensure "All" is
+    // active before scanning rows. "All" has no id — match by text/tooltip, else first tab.
+    // Clicking a tab re-filters the already-typed query, no retyping needed. If the tab row is
+    // missing (TV change), continue: the strict row match below stays the fail-closed backstop.
+    const tabs = document.querySelectorAll(SEL.symbolSearchTab)
+    if (tabs.length) {
+      const allTab = [...tabs].find(b => (b.innerText || '').trim() === 'All'
+        || (b.getAttribute('data-overflow-tooltip-text') || '') === 'All') || tabs[0]
+      if (allTab && allTab.getAttribute('aria-selected') !== 'true')
+        freshClick(allTab)
+    }
     // Find the exact result row: prefer one whose text contains both EXCHANGE and SYMBOL of "EXCHANGE:SYMBOL"
     const wantExchange = targetUpper.includes(':') ? targetUpper.split(':')[0] : null
     const wantSymbol = targetUpper.includes(':') ? targetUpper.split(':')[1] : targetUpper
-    const items = document.querySelectorAll(SEL.symbolSearchItem)
     // STRICT match: require BOTH symbol AND exchange to match (symbol-only for an unqualified target) so we never silently land on a wrong-exchange security that shares the ticker. No symbol-only fallback for qualified targets — if the qualified row isn't found, fail (best-effort flags the ticker for a manual click) rather than guess.
+    // Results load asynchronously (and re-filter after the tab click), so poll-scan with a bound
+    // instead of a single fixed-delay read.
+    const scanRows = () => {
+      for (const it of document.querySelectorAll(SEL.symbolSearchItem)) {
+        const txt = (it.innerText || '').toUpperCase()
+        const tokens = txt.split('\n').map(s => s.trim()).filter(Boolean)
+        const symbolMatch = tokens.some(t => t === wantSymbol) || txt.includes(wantSymbol)
+        const exchMatch = !wantExchange || txt.includes(wantExchange)
+        if (symbolMatch && exchMatch) return it
+      }
+      return null
+    }
     let chosen = null
-    for (const it of items) {
-      const txt = (it.innerText || '').toUpperCase()
-      const tokens = txt.split('\n').map(s => s.trim()).filter(Boolean)
-      const symbolMatch = tokens.some(t => t === wantSymbol) || txt.includes(wantSymbol)
-      const exchMatch = !wantExchange || txt.includes(wantExchange)
-      if (symbolMatch && exchMatch) { chosen = it; break }
+    for (let i = 0; i < 20 && !chosen; i++) {
+      await page.waitForTimeout(100)
+      chosen = scanRows()
     }
     if (!chosen) {
       await closeDialog()
@@ -1755,15 +1774,57 @@ tv.setTestingPeriod = async (from, to, label) => {
     const dlg = await page.waitForSelector(SEL.customDateRangeDialog, 2000)
     if (!dlg)
       return { ok: false, message: 'Custom date range dialog did not open.' }
-    // TV's date picker is a range STATE MACHINE that ignores the "to" textbox (the end date never commits), so write via the CALENDAR GRID: day buttons carry data-day="YYYY-MM-DD", month-nav buttons have stable aria-labels. First day click = range start, second = range end.
+    // Live-proven picker facts (Jun-2026 TV) this branch is built on:
+    //  - END selection is trusted-event-gated: EVERY synthetic interaction (click, full pointer
+    //    sequence, keyboard, typed input) moves only the START and keeps the displayed end. An
+    //    end that differs from the dialog's prefilled end is programmatically unreachable; only
+    //    a real mouse click can change it.
+    //  - Submit stays aria-disabled while the displayed range equals the ACTIVE period's
+    //    resolution, so pinning the concrete dates of a preset that already resolves to the
+    //    target takes TWO commits (both start-clicks): [to,to] first, then [from,to].
+    //  - Cancel never commits; day buttons carry data-day="YYYY-MM-DD"; month-nav buttons have
+    //    stable aria-labels.
     const dlgSel = SEL.customDateRangeDialog
+    const isoRe = /^\d{4}-\d{2}-\d{2}$/
+    const readDlgInputs = () => {
+      const ins = document.querySelectorAll(SEL.customDateRangeInput)
+      return { from: ins[0] ? String(ins[0].value || '').trim() : '', to: ins[1] ? String(ins[1].value || '').trim() : '' }
+    }
+    // the inputs and the day-grid mount after the dialog node appears — before touching the
+    // dialog (initial open AND every reopen), wait for BOTH a valid ISO prefill and a mounted
+    // current-month day cell, or a too-early read routes to the wrong branch / findDay sees an
+    // empty calendar and bails
+    const dlgReady = async () => {
+      for (let i = 0; i < 20; i++) {
+        const cur = readDlgInputs()
+        if (isoRe.test(cur.from) && isoRe.test(cur.to)
+            && document.querySelector(`${dlgSel} button[data-day]:not([class*="another-month"])`))
+          return true
+        await page.waitForTimeout(100)
+      }
+      return false
+    }
+    // wait until the inputs equal the wanted pair on TWO consecutive reads — a single changed
+    // read can be an intermediate React render, not the settled state
+    const pollInputs = async (wantFrom, wantTo) => {
+      let prev = null
+      for (let i = 0; i < 20; i++) {
+        const cur = readDlgInputs()
+        const key = `${cur.from}|${cur.to}`
+        if (cur.from === wantFrom && cur.to === wantTo && prev === key) return true
+        prev = key
+        await page.waitForTimeout(100)
+      }
+      return false
+    }
     const navClick = (dir) => {
       const b = [...document.querySelectorAll(`${dlgSel} button`)].find(x => (x.getAttribute('aria-label') || '').startsWith(dir))
       if (b) { b.click(); return true }
       return false
     }
     const findDay = async (iso) => {
-      // navigate (max 36 month-hops) until the target day exists as a CURRENT-month cell
+      // navigate (max 36 month-hops) until the target day exists as a CURRENT-month cell;
+      // after each hop, poll for the shown month to actually change (a fixed wait raced slow renders)
       for (let hops = 0; hops < 36; hops++) {
         const el = document.querySelector(`${dlgSel} button[data-day="${iso}"]:not([class*="another-month"])`)
         if (el) return el
@@ -1773,7 +1834,11 @@ tv.setTestingPeriod = async (from, to, label) => {
         const want = iso.slice(0, 7)
         if (want === cur) return null // month shown but day cell absent
         if (!navClick(want < cur ? 'Previous month' : 'Next month')) return null
-        await page.waitForTimeout(180)
+        for (let w = 0; w < 10; w++) {
+          await page.waitForTimeout(100)
+          const now = document.querySelector(`${dlgSel} button[data-day]:not([class*="another-month"])`)
+          if (now && now.getAttribute('data-day').slice(0, 7) !== cur) break
+        }
       }
       return null
     }
@@ -1782,58 +1847,115 @@ tv.setTestingPeriod = async (from, to, label) => {
       if (cancel) cancel.click()
       return { ok: false, message: why }
     }
-    // the date picker is a range state machine: when the prefill already shows the target END, the FIRST day click can complete the whole range and a SECOND click then RESETS it to end→end. So click ONLY what's needed — prefill == target ⇒ submit directly; after the start click, re-read and skip the end click once the range is already complete.
-    const readDlgInputs = () => {
-      const ins = document.querySelectorAll(SEL.customDateRangeInput)
-      return { from: ins[0] ? String(ins[0].value || '').trim() : '', to: ins[1] ? String(ins[1].value || '').trim() : '' }
+    // one gated commit: click a day, wait for the inputs to settle on EXACTLY the wanted pair,
+    // only then submit. Submitting anything else is what used to corrupt the period.
+    const commitStartClick = async (dayIso, wantFrom, wantTo) => {
+      const el = await findDay(dayIso)
+      if (!el || el.disabled)
+        return { ok: false, message: `Date ${dayIso} is not selectable in the calendar (weekend/holiday boundary or before first available data?).` }
+      el.click()
+      if (!(await pollInputs(wantFrom, wantTo)))
+        return { ok: false, message: `Calendar did not settle on ${wantFrom} — ${wantTo} after clicking ${dayIso}.` }
+      const submit = document.querySelector(SEL.customDateRangeSubmit)
+      if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true')
+        return { ok: false, message: `Submit stayed disabled for ${wantFrom} — ${wantTo}.` }
+      submit.click()
+      const stillOpen = await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
+      if (stillOpen)
+        return { ok: false, message: `Custom date range dialog did not close after submitting ${wantFrom} — ${wantTo}.` }
+      await page.waitForTimeout(400)
+      return { ok: true }
     }
-    let needEndClick = true
+    const reopenDialog = async () => {
+      const b = tv._findTestingPeriodButton()
+      if (!b) return false
+      page.mouseClick(b)
+      await page.waitForTimeout(500)
+      let row = null
+      for (const r of document.querySelectorAll(SEL.testingPeriodMenuRow)) {
+        if ((r.innerText || '').trim() === 'Custom date range') { row = r; break }
+      }
+      if (!row) { await closeMenu(b); return false }
+      page.mouseClick(row)
+      if (!(await page.waitForSelector(SEL.customDateRangeDialog, 2000)))
+        return false
+      return await dlgReady()
+    }
+    // best-effort return to the original named preset when the dance dies between its two
+    // commits (the chart would otherwise be left on the transient [to,to] one-day range)
+    const reselectPreset = async (label) => {
+      try {
+        if (!label) return
+        const b = tv._findTestingPeriodButton()
+        if (!b) return
+        page.mouseClick(b)
+        await page.waitForTimeout(500)
+        for (const r of document.querySelectorAll(SEL.testingPeriodMenuRow)) {
+          if (normalizeTitle((r.innerText || '').trim()) === normalizeTitle(tv._stripDeepBadge(label))) {
+            page.mouseClick(r)
+            await page.waitForTimeout(500)
+            return
+          }
+        }
+        await closeMenu(b)
+      } catch {}
+    }
+    const verifyAfter = () => {
+      const after = tv._readTestingPeriod()
+      if (after && after.from === from && after.to === to)
+        return { ok: true, message: `Testing period set to ${from} — ${to}.` }
+      const got = after ? `${after.from}—${after.to}` : 'unknown'
+      return { ok: false, message: `Testing period verification failed (wanted ${from}—${to}, got ${got}).` }
+    }
+    if (!(await dlgReady()))
+      return closeFail('Custom date range dialog did not finish loading (inputs/day grid missing).')
     const pre = readDlgInputs()
     if (pre.from === from && pre.to === to) {
-      needEndClick = false   // prefill already equals the target range -> least-mutating: go straight to submit
-    } else {
-      const fromEl = await findDay(from)
-      if (!fromEl || fromEl.disabled)
-        return closeFail(`Start date ${from} is not selectable in the calendar (before first available data?).`)
-      fromEl.click()
-      await page.waitForTimeout(200)
-      const afterFrom = readDlgInputs()
-      if (afterFrom.from === from && afterFrom.to === to)
-        needEndClick = false   // the start click already completed the target range; a second click would RESET it (the bug)
+      // the ACTIVE period (a rolling preset like "Last 90 days" — a concrete match never reaches
+      // the dialog, the early exit returns first) already resolves to the target, but the saved
+      // concrete dates must be PINNED so the period cannot drift with the calendar date.
+      // Submit is disabled (displayed == active) — force it with the two-commit dance.
+      const step1 = await commitStartClick(to, to, to)
+      if (!step1.ok)
+        return closeFail(`Could not pin the concrete range: ${step1.message}`)
+      if (!(await reopenDialog())) {
+        // reopen may have left a half-mounted dialog open — cancel it and WAIT for it to close,
+        // or the preset re-click below lands on a still-modal page and gets swallowed
+        const fail = closeFail(`Custom date range dialog did not reopen to complete pinning ${from} — ${to}.`)
+        await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
+        await reselectPreset(before && before.label)
+        return fail
+      }
+      const step2 = await commitStartClick(from, from, to)
+      if (!step2.ok) {
+        const fail = closeFail(`Could not pin the concrete range: ${step2.message}`)
+        await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
+        await reselectPreset(before && before.label)
+        return fail
+      }
+      return verifyAfter()
     }
-    if (needEndClick) {
-      const toEl = await findDay(to)
-      if (!toEl || toEl.disabled)
-        return closeFail(`End date ${to} is not selectable in the calendar.`)
-      toEl.click()
-      await page.waitForTimeout(250)
+    if (pre.to === to) {
+      // end already matches: a single start-click completes [from, to] (the end is kept)
+      const step = await commitStartClick(from, from, to)
+      if (!step.ok)
+        return closeFail(step.message)
+      return verifyAfter()
     }
-    const submit = document.querySelector(SEL.customDateRangeSubmit)
-    if (submit && !submit.disabled && submit.getAttribute('aria-disabled') !== 'true') {
-      submit.click()
-    } else {
-      // submit disabled => range unchanged (already matching) — close without committing
-      const cancel = document.querySelector(SEL.customDateRangeCancel)
-      if (cancel) cancel.click()
+    // the target end differs from the prefilled end. One opportunistic end-day click behind the
+    // commit gate (harmless when TV ignores it; would work on a future UI that honors it), then
+    // fail CLOSED — never submit a range that does not read exactly [from, to].
+    const endEl = await findDay(to)
+    if (endEl && !endEl.disabled) {
+      endEl.click()
+      await page.waitForTimeout(300)
+      if (readDlgInputs().to === to) {
+        const step = await commitStartClick(from, from, to)
+        if (step.ok)
+          return verifyAfter()
+      }
     }
-    await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
-    await page.waitForTimeout(400)
-    const after = tv._readTestingPeriod()
-    if (after && after.from === from && after.to === to)
-      return { ok: true, message: `Testing period set to ${from} — ${to}.` }
-    const got = after ? `${after.from}—${after.to}` : 'unknown'
-    const noConcrete = !after || (after.from === null && after.to === null)
-    let cause = ''
-    if (noConcrete) {
-      const DOW = ['Sunday', 'Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday']
-      const dow = (iso) => { const d = new Date(`${iso}T00:00:00Z`); return isNaN(d.getTime()) ? -1 : d.getUTCDay() }
-      const weekendBoundaries = [['start', from], ['end', to]]
-        .filter(([, iso]) => { const w = dow(iso); return w === 0 || w === 6 })
-        .map(([side, iso]) => `${side} ${iso} (${DOW[dow(iso)]})`)
-      const note = weekendBoundaries.length ? ` (note: ${weekendBoundaries.join(' and ')} ${weekendBoundaries.length > 1 ? 'fall' : 'falls'} on a weekend)` : ''
-      cause = ` The calendar did not commit the requested concrete range — a boundary may be a weekend, a market holiday, or outside the available data${note}. Set the testing period to the nearest trading day with data, then re-upload.`
-    }
-    return { ok: false, message: `Testing period verification failed (wanted ${from}—${to}, got ${got}).${cause}` }
+    return closeFail(`Testing period ${from} — ${to} cannot be set automatically: its end date differs from the chart's current period end (${pre.to || 'unknown'}), and TradingView's calendar accepts end-date changes only from a real mouse click. Open Testing period → Custom date range and click ${from} then ${to} manually.`)
   } catch (err) {
     return { ok: false, message: `Testing period error: ${err.message || err}` }
   }

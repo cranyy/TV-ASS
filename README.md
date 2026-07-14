@@ -69,6 +69,8 @@ Or just run:
 git clone https://github.com/cranyy/TV-ASS.git
 ```
 
+(Tip: cloning makes updates painless — when a new version is out, just run `git pull` in that folder and hit the refresh icon on the extension in your browser. No re-downloading zips.)
+
 2. Unzip it in any folder 
 
 3. Open Chrome.
@@ -86,7 +88,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped/cloned to in Step 2. 
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.119
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.120
 
 
 
@@ -100,6 +102,8 @@ Or just run:
 ```
 git clone https://github.com/cranyy/TV-ASS.git
 ```
+
+(Tip: cloning makes updates painless — when a new version is out, just run `git pull` in that folder and hit the refresh icon on the extension in your browser. No re-downloading zips.)
 
 2. Unzip it in any folder 
 
@@ -118,7 +122,7 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped to/cloned to in step 2.
 
-Thats it you can use the new one as normal now, it will be called TV-ASS 1.119
+Thats it you can use the new one as normal now, it will be called TV-ASS 1.120
 
 
 ## Good to know
@@ -135,6 +139,18 @@ Built entirely on the original TradingView Assistant by Andrei Kuminov (akumidv)
 ---
 
 ## CHANGELOG
+
+### 1.120 — Upload restore: ticker tab + testing period (July 2026)
+
+Two long-standing upload annoyances fixed:
+
+- **Ticker no longer fails when symbol search was left on the wrong tab** — TradingView remembers which category tab (All / Stocks / Forex / Crypto…) you last used in the symbol search, and if it wasn't "All" the uploaded ticker often wasn't in the filtered results at all, so the upload flagged *"set the symbol manually"* for no good reason. The extension now switches the dialog to "All" first (your typed search re-filters instantly), so the ticker is found no matter what tab you left it on.
+
+- **Testing period restore is now consistent instead of a coin flip** — several problems in the custom date-range dialog, all fixed:
+  - If the chart's current preset (e.g. "Last 90 days") already resolved to exactly the file's dates, the upload still errored out with *"set manually"*. Now the file's exact dates get pinned as a proper custom range instead — which also means they can't silently drift to different dates tomorrow the way a rolling preset does.
+  - The calendar used to be clicked and submitted blindly, and when TradingView interpreted a click differently than expected this could **commit a wrong range** (even a nonsense 1-day window) on top of showing an error. Now the Select button is only ever pressed when the dialog literally shows your file's dates — committing a wrong range is impossible.
+  - All the fixed "wait 200ms and hope" delays were replaced with proper settle-polling (dialog mounting, month navigation, input updates), which kills the sometimes-works-sometimes-doesn't behavior.
+  - If TradingView's calendar refuses the scripted end-date change outright (some TV builds do this — only a real mouse click works there), the upload no longer wrecks your period: it leaves it untouched and tells you the exact two calendar clicks to make by hand, while everything else from the file is already applied.
 
 ### 1.119 — TradingView moved the furniture again (July 2026)
 

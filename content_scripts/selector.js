@@ -210,10 +210,15 @@ const SEL = {
   styleSwatchColor: 'div[class*="swatch-"]',
 
   // Jun-2026 symbol-search dialog (for the new ticker setter): #header-toolbar-symbol-search opens [data-name="symbol-search-items-dialog"] with input[placeholder="Symbol, ISIN, or CUSIP"] prefilled, and result rows [data-name="symbol-search-dialog-content-item"] whose text includes EXCHANGE:SYMBOL. Escape dispatched on the input closes it.
+  // The dialog also has a STICKY category-filter tab row (All/Stocks/Funds/…): buttons with
+  // aria-selected, the active one aria-selected="true". A foreign sticky tab filters the target
+  // symbol out of the results entirely, so tv.setTicker must ensure "All" (no id; first tab,
+  // text/tooltip "All") is active. Clicking a tab re-filters the already-typed query in place.
   symbolSearchButton: '#header-toolbar-symbol-search',
   symbolSearchDialog: '[data-name="symbol-search-items-dialog"]',
   symbolSearchInput: '[data-name="symbol-search-items-dialog"] input',
   symbolSearchItem: '[data-name="symbol-search-dialog-content-item"]',
+  symbolSearchTab: '[data-name="symbol-search-items-dialog"] button[aria-selected]',
 
   // chart LAYOUT switch (capture name + restore-FIRST): active name in #header-toolbar-save-load [class*="textWrap-"] span:first-child; the "Manage layouts" caret button[data-name="save-load-menu"] opens the menu; recently-used rows [data-qa-id="save-load-menu-item-recent"] (row text = layout name); "Open layout…" row [data-qa-id="save-load-menu-item-load"] opens [data-name="load-layout-dialog"] listing all layouts as [data-name="load-chart-dialog-item"] rows + input[placeholder="Search"]. Toolbar name flips instantly; chart content load is slow (~1min) and is handled by tv._waitLayoutSettled. Load only — restore never calls Save/Autosave.
   layoutToolbarName: '#header-toolbar-save-load [class*="textWrap-"] span:first-child',
