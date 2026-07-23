@@ -69,7 +69,7 @@ Or just run:
 git clone https://github.com/cranyy/TV-ASS.git
 ```
 
-(Tip: cloning makes updates painless — when a new version is out, just run `git pull` in that folder and hit the refresh icon on the extension in your browser. No re-downloading zips.)
+**(Tip: cloning makes updates painless — when a new version is out, just run `git pull` in that folder and hit the refresh icon on the extension in your browser.)**
 
 2. Unzip it in any folder 
 
@@ -140,26 +140,6 @@ Built entirely on the original TradingView Assistant by Andrei Kuminov (akumidv)
 
 ## CHANGELOG
 
-### 1.120 — Upload restore: ticker tab + testing period (July 2026)
+### 1.121
 
-Two long-standing upload annoyances fixed:
-
-- **Ticker no longer fails when symbol search was left on the wrong tab** — TradingView remembers which category tab (All / Stocks / Forex / Crypto…) you last used in the symbol search, and if it wasn't "All" the uploaded ticker often wasn't in the filtered results at all, so the upload flagged *"set the symbol manually"* for no good reason. The extension now switches the dialog to "All" first (your typed search re-filters instantly), so the ticker is found no matter what tab you left it on.
-
-- **Testing period restore is now consistent instead of a coin flip** — several problems in the custom date-range dialog, all fixed:
-  - If the chart's current preset (e.g. "Last 90 days") already resolved to exactly the file's dates, the upload still errored out with *"set manually"*. Now the file's exact dates get pinned as a proper custom range instead — which also means they can't silently drift to different dates tomorrow the way a rolling preset does.
-  - The calendar used to be clicked and submitted blindly, and when TradingView interpreted a click differently than expected this could **commit a wrong range** (even a nonsense 1-day window) on top of showing an error. Now the Select button is only ever pressed when the dialog literally shows your file's dates — committing a wrong range is impossible.
-  - All the fixed "wait 200ms and hope" delays were replaced with proper settle-polling (dialog mounting, month navigation, input updates), which kills the sometimes-works-sometimes-doesn't behavior.
-  - If TradingView's calendar refuses the scripted end-date change outright (some TV builds do this — only a real mouse click works there), the upload no longer wrecks your period: it leaves it untouched and tells you the exact two calendar clicks to make by hand, while everything else from the file is already applied.
-
-### 1.119 — TradingView moved the furniture again (July 2026)
-
-TradingView redesigned the strategy Properties tab and the Strategy Tester panel, which quietly broke a couple of things. This version adapts to all of it:
-
-- **Old saved runs upload cleanly again** — TradingView removed four rows from the Properties tab: "Base currency" now lives as a little dropdown next to Initial capital, "Margin for long/short positions" got replaced by "Long/Short leverage", and "Verify price for limit orders" became a "Limit order execution" dropdown. So every time you uploaded an older saved run you'd get slapped with *"Properties not found (4): Base currency, Verify price for limit orders, Margin for long positions, Margin for short positions"* — even though nothing was actually wrong with your file.
-Now the extension translates your old files to the new layout on the fly — e.g. Margin 5% becomes Long leverage 20x (same thing, different units), and it TELLS you what it mapped in the upload summary instead of erroring. New saves also remember the currency and units properly now, which the old scraper silently dropped.
-One honest caveat: TradingView reduced "verify price for limit orders" from any-number-of-ticks to a simple "1 tick beyond" option, so if your old file had it set above 1, the closest possible thing is applied and you get a note about it.
-
-- **Fixed the endless "Backtesting report did not settle" error** — the Strategy Tester now has a little icon toggle on the left (report view vs List of trades). If it was sitting on List of trades, the report data literally doesn't exist on the page, so every single cycle would blow up with *"The 'Update report' button was clicked but no report update followed within 45s"*. The extension now just flips itself back to the report view before reading, so you can leave the panel however you want.
-
-- **CAGR and ~50 more metrics as optimization targets and filters** — TradingView's new report exposes a bunch of metrics we simply never listed: Annualized return (CAGR), Expected payoff, Strategy outperformance, the whole close-to-close run-up/drawdown family, Return on initial capital, Net PnL as % of largest loss, margin usage stuff, and more. All of them are now selectable both as the thing you maximize AND in the two filters. A couple were deliberately left out (the duration ones like "Average drawdown duration") because TradingView renders them as text like "21h 30m" and they don't compare as clean numbers.
+Modified a few visual things

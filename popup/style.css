@@ -27,14 +27,17 @@ html{
 
 body {
     height: 100%;
+    width: 600px;
+    max-width: 100vw;
     font-family: Arial, Helvetica, sans-serif;
     font-size: 90%;
     margin: 0;
     padding: 0;
     color: #2A2E43; /*#2B2F45;*/
-    min-width: 600px;
+    min-width: 0;
     min-height: 550px;
-    overflow-y: hidden;
+    overflow-x: hidden;
+    overflow-y: auto;
     /*display: flex;*/
     /*flex-direction: column;*/
 }
@@ -107,15 +110,80 @@ body {
 }
 
 .param-container {
-    overflow:hidden
+    overflow: visible;
 }
 .param-box{
-    white-space:nowrap
+    white-space: normal;
 }
-.param-box div {
+.param-box > div {
     display:inline-block;
     border: 0px;
     margin: 5px
+}
+
+.param-box--objective {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+    gap: 0.75em;
+    padding: 5px;
+}
+
+.param-box--objective > .objective-field {
+    display: grid;
+    grid-template-columns: max-content minmax(0, 1fr);
+    align-items: center;
+    gap: 0.5em;
+    min-width: 0;
+    margin: 0;
+}
+
+.objective-label {
+    display: flex;
+    align-items: center;
+    gap: 0.2em;
+    white-space: nowrap;
+}
+
+.objective-field select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
+}
+
+.param-box--wrap {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 0.5em;
+    padding: 5px;
+}
+
+.param-box--wrap > div {
+    display: flex;
+    align-items: center;
+    gap: 0.25em;
+    min-width: 0;
+    margin: 0;
+}
+
+.param-box--ga > div:last-child {
+    flex: 1 1 18em;
+    flex-wrap: wrap;
+}
+
+.param-box--ga .disabled {
+    flex: 1 1 18em;
+    min-width: 0;
+    white-space: normal;
+}
+
+#gaMinTradesTotal {
+    flex: 0 0 auto;
+    width: 8em;
+}
+
+#listOfTF {
+    max-width: 100%;
 }
 
 .checkbox-minmax {
@@ -327,21 +395,33 @@ body {
     /*box-shadow: 3px 3px 7px #777;*/
     /*background: #a9c7d0;*/
     /*width: 125px;*/
+    position: relative;
 }
 .switch-toggle > input {
-    /*position: fixed;*/
+    position: absolute;
+    width: 1px;
+    height: 1px;
     opacity: 0;
 }
 .switch-toggle > input + label {
-    padding: 5px 0px;
-    margin: 5px ;
-    float: left;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    min-width: 3.5em;
+    min-height: 28px;
+    padding: 4px 8px;
+    margin: 0;
     border: 1px solid #ccc;
     color: #3e3e3e;
     cursor: pointer;
-    height: 20px;
     font-size: 90%;
 }
+
+.switch-toggle > input:focus-visible + label {
+    outline: 2px solid #1976d2;
+    outline-offset: 2px;
+}
+
 .switch-toggle > input[type="radio"]:checked + label {
     background: lightgreen;
 }
@@ -355,9 +435,8 @@ body {
 }
 
 .switch-toggle > input[data-filter-off]:not(:checked) ~ div.filter-param {
-    display: inline-flex;
+    display: grid;
     align-items: center;
-    gap: 0.4em;
 }
 
 
@@ -377,48 +456,34 @@ body {
     display: flex;
     flex-wrap: wrap;
     align-items: center;
-}
-
-.param-box--filters > .switch-toggle,
-.param-box--filters > .secondary-filter {
+    gap: 0.35em;
     margin: 0;
+    padding: 0.25em 0;
     width: 100%;
-}
-
-.param-box--filters > .secondary-filter {
-    display: block;
 }
 
 .param-box--filters .switch-toggle > input + label {
     float: none;
 }
 
-.secondary-filter {
-    margin-top: 0.5em;
-}
-
-.secondary-filter .switch-toggle {
-    display: flex;
-    flex-wrap: wrap;
-    align-items: center;
-}
-
-.secondary-filter .switch-toggle > input + label {
-    margin: 5px 5px 5px 0;
-}
-
-.secondary-filter .filter-param {
-    display: flex;
+.filter-param {
+    flex: 1 0 100%;
+    grid-template-columns: max-content 5em max-content minmax(0, 1fr);
     align-items: center;
     gap: 0.4em;
+    min-width: 0;
+    margin-top: 0.35em;
 }
 
-.secondary-filter .filter-param input[type="number"] {
+.filter-param input[type="number"] {
     width: 5em;
+    max-width: 100%;
 }
 
-.secondary-filter .filter-param select {
-    min-width: 16em;
+.filter-param select {
+    width: 100%;
+    min-width: 0;
+    max-width: 100%;
 }
 
 .switch-toggle > input#optFilterLess:checked + label,

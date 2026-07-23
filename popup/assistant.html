@@ -28,16 +28,16 @@
                         <details open>
                             <summary>Strategy optimization parameters</summary>
                             <div>
-                                <div class="param-container">
-                                    <div class="param-box">
-                                        <div>
-                                            <label class="checkbox-minmax">
-                                                <input id="optMinmax" type="checkbox" checked>
-                                                <b></b>
-                                            </label>
-                                            <span> value of</span>
-                                        </div>
-                                        <div>
+                                <div class="param-container param-container--objective">
+                                    <div class="param-box param-box--objective">
+                                        <div class="objective-field">
+                                            <div class="objective-label">
+                                                <label class="checkbox-minmax">
+                                                    <input id="optMinmax" type="checkbox" checked>
+                                                    <b></b>
+                                                </label>
+                                                <label for="optParamName">value of</label>
+                                            </div>
                                             <select id="optParamName" name="optParamName">
                                                 <option value="Performance_tab" disabled="disabled">Performance tab</option>
                                                 <option value="Net profit: All" selected="selected">Net profit: All</option>
@@ -195,8 +195,8 @@
                                                 <option value="Largest liquidated volume">Largest liquidated volume</option>
                                             </select>
                                         </div>
-                                        <div>by</div>
-                                        <div>
+                                        <div class="objective-field">
+                                            <label for="optMethod">Optimization method</label>
                                             <select id="optMethod" name="method">
                                                 <option value="annealing">Annealing</option>
                                                 <option value="random" selected="selected">Random</option>
@@ -207,7 +207,6 @@
                                                 <option value="genetic">Genetic algorithm (beta)</option>
                                             </select>
                                         </div>
-                                        <div>method</div>
                                     </div>
                                 </div>
                             </div>
@@ -226,10 +225,9 @@
                                             <input id="optFilterLess" name="state-d" type="radio"/>
                                             <label for="optFilterLess">Less</label>
                                             <div id="filterParam" class="filter-param">
-                                                <span>than</span>
-                                                <input id="optFilterValue" type="number" name="method"
-                                                       style="width: 5em" value="5">
-                                                <span>for</span>
+                                                <label for="optFilterValue">than</label>
+                                                <input id="optFilterValue" type="number" name="method" value="5">
+                                                <label for="optFilterParamName">for</label>
                                                 <select id="optFilterParamName" name="optFilterParamName">
                                                 <option value="Performance_tab" disabled="disabled">Performance tab</option>
                                                 <option value="Net profit: All">Net profit: All</option>
@@ -387,34 +385,31 @@
                                                 <option value="Largest liquidated volume">Largest liquidated volume</option>
                                             </select>
                                             </div>
-
-                                        <div class="secondary-filter">
-                                            <div class="switch-toggle switch-3 switch-candy">
-                                                <input data-filter-off="true" id="optFilter2Off" name="state-d-2" type="radio" checked="checked"/>
-                                                <label for="optFilter2Off">OFF</label>
-
-                                                <input id="optFilter2More" name="state-d-2" type="radio"/>
-                                                <label for="optFilter2More" class="disabled">More</label>
-
-                                                <input id="optFilter2Less" name="state-d-2" type="radio"/>
-                                                <label for="optFilter2Less">Less</label>
-                                                <div id="filterParam2" class="filter-param">
-                                                    <span>than</span>
-                                                    <input id="optFilterValue2" type="number" name="method"
-                                                           style="width: 5em" value="5">
-                                                    <span>for</span>
-                                                    <select id="optFilterParamName2" name="optFilterParamName2">
-                                                    </select>
-                                                </div>
-                                            </div>
                                         </div>
+
+                                        <div class="switch-toggle switch-3 switch-candy">
+                                            <input data-filter-off="true" id="optFilter2Off" name="state-d-2" type="radio" checked="checked"/>
+                                            <label for="optFilter2Off">OFF</label>
+
+                                            <input id="optFilter2More" name="state-d-2" type="radio"/>
+                                            <label for="optFilter2More" class="disabled">More</label>
+
+                                            <input id="optFilter2Less" name="state-d-2" type="radio"/>
+                                            <label for="optFilter2Less">Less</label>
+                                            <div id="filterParam2" class="filter-param">
+                                                <label for="optFilterValue2">than</label>
+                                                <input id="optFilterValue2" type="number" name="method" value="5">
+                                                <label for="optFilterParamName2">for</label>
+                                                <select id="optFilterParamName2" name="optFilterParamName2">
+                                                </select>
+                                            </div>
                                         </div>
                                     </div>
                                 </div>
                             </div>
                             <div>
                                 <div class="param-container">
-                                    <div class="param-box">
+                                    <div class="param-box param-box--wrap">
                                         <div>
                                             <input id="shouldTestTF" type="checkbox"/>
                                             <label for="shouldTestTF">Backtesting the strategy on timeframes (divided by
@@ -440,12 +435,12 @@
                             </div>
                             <div>
                                 <div class="param-container">
-                                    <div class="param-box">
+                                    <div class="param-box param-box--wrap param-box--ga">
                                         <div>
                                             <label for="gaMinTradesTotal">Minimum total closed trades (GA)</label>
                                         </div>
-                                        <div>
-                                            <input id="gaMinTradesTotal" type="number" min="0" step="1" placeholder="e.g. 50" style="width: 8em" />
+                                        <div class="ga-control">
+                                            <input id="gaMinTradesTotal" type="number" min="0" step="1" placeholder="e.g. 50" />
                                             <label class="disabled" for="gaMinTradesTotal">GA only. Skip candidates with fewer total closed trades. Leave blank to keep default.</label>
                                         </div>
                                     </div>
