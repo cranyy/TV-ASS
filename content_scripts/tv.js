@@ -1245,14 +1245,18 @@ tv.setChartLayout = async (targetName) => {
 
     // confirm the toolbar name flipped to the target (the switch registered)
     let flipped = false
-    for (let i = 0; i < 50; i++) { // ~5s
+    for (let i = 0; i < 300; i++) { // ~30s
       if (tv.getChartLayoutName() === target) { flipped = true; break }
       await page.waitForTimeout(100)
     }
     if (!flipped)
-      return { ok: false, error: 'layout name did not update after click' }
-
-    await tv._waitLayoutSettled()
+      return { ok: false, error: `layout name did not update after click (toolbar reads "${tv.getChartLayoutName() || 'unknown'}")` }
+    const settled = await tv._waitLayoutSettled()
+    if (!settled)
+      return { ok: false, error: `layout "${target}" did not finish rendering after the switch` }
+    const finalName = tv.getChartLayoutName()
+    if (finalName !== target)
+      return { ok: false, error: `layout changed to "${finalName || 'unknown'}" while its content was settling` }
     return { ok: true, skipped: false }
   } catch (err) {
     console.warn('[TV-ASS] setChartLayout failed:', err)
@@ -1342,6 +1346,7 @@ tv._readTestingPeriod = () => {
 tv._boundedPresetRegex = /^(last \d+ days|range from chart( default)?)$/i
 tv._isBoundedTestingPreset = (l) => tv._boundedPresetRegex.test(tv._stripDeepBadge(l || ''))
 tv.resolveTestingPeriodConcrete = async () => {
+  try { await tv._ensureReportPanelOpen() } catch {}
   const base = tv._readTestingPeriod()
   if (!base)
     return null
@@ -1712,6 +1717,34 @@ tv.setTicker = async (tickerFull) => {
   }
 }
 
+tv._isTestingPeriodPresetSelected = async (label) => {
+  const wanted = normalizeTitle(tv._stripDeepBadge(label || ''))
+  if (!wanted)
+    return false
+  const marked = (el) => !!el && String(el.className || '').split(/\s+/).some(c => c.startsWith('selected-'))
+  const btn = tv._findTestingPeriodButton()
+  if (!btn)
+    return false
+  let selected = false
+  try {
+    page.mouseClick(btn)
+    await page.waitForTimeout(500)
+    for (const r of document.querySelectorAll(SEL.testingPeriodMenuRow)) {
+      if (normalizeTitle((r.innerText || '').trim()) !== wanted)
+        continue
+      selected = marked(r) || marked(r.parentElement)
+      break
+    }
+  } catch {}
+  try {
+    if (document.querySelectorAll(SEL.testingPeriodMenuRow).length) {
+      page.mouseClick(btn)
+      await page.waitForTimeout(300)
+    }
+  } catch {}
+  return selected
+}
+
 tv.setTestingPeriod = async (from, to, label) => {
   const closeMenu = async (btn) => {
     // re-click the range button toggles the menu closed; verify no Custom-date row remains
@@ -1721,6 +1754,7 @@ tv.setTestingPeriod = async (from, to, label) => {
   }
   const isoToHuman = null // not needed; we compare by re-reading
   try {
+    try { await tv._ensureReportPanelOpen() } catch {}
     const btn = tv._findTestingPeriodButton()
     if (!btn)
       return { ok: false, message: 'Testing-period button not found on the current UI.' }
@@ -1757,6 +1791,8 @@ tv.setTestingPeriod = async (from, to, label) => {
       }
       if (afterLabel && normalizeTitle(afterLabel) === normalizeTitle(tv._stripDeepBadge(label)))
         return { ok: true, message: `Testing period set to "${label}".` }
+      if (await tv._isTestingPeriodPresetSelected(label))
+        return { ok: true, message: `Testing period set to "${label}".` }
       return { ok: false, message: `Testing-period preset "${label}" could not be verified after selection (button now reads "${afterLabel || 'unknown'}").` }
     }
 
@@ -1782,14 +1818,30 @@ tv.setTestingPeriod = async (from, to, label) => {
     //  - Submit stays aria-disabled while the displayed range equals the ACTIVE period's
     //    resolution, so pinning the concrete dates of a preset that already resolves to the
     //    target takes TWO commits (both start-clicks): [to,to] first, then [from,to].
-    //  - Cancel never commits; day buttons carry data-day="YYYY-MM-DD"; month-nav buttons have
-    //    stable aria-labels.
+    //  - Cancel never commits; month-nav buttons have stable aria-labels.
     const dlgSel = SEL.customDateRangeDialog
     const isoRe = /^\d{4}-\d{2}-\d{2}$/
     const readDlgInputs = () => {
       const ins = document.querySelectorAll(SEL.customDateRangeInput)
       return { from: ins[0] ? String(ins[0].value || '').trim() : '', to: ins[1] ? String(ins[1].value || '').trim() : '' }
     }
+    const dayCellIso = (el) => {
+      if (!el)
+        return null
+      const attr = el.getAttribute('data-day')
+      if (attr)
+        return attr
+      const m = /^\w+day\s+(\d{1,2})\s+([A-Za-z]+)\s+(\d{4})$/.exec((el.getAttribute('aria-label') || '').trim())
+      if (!m)
+        return null
+      const mm = tv._monthToNum[m[2].slice(0, 3).toLowerCase()]
+      if (!mm)
+        return null
+      return `${m[3]}-${mm}-${String(parseInt(m[1], 10)).padStart(2, '0')}`
+    }
+    const currentMonthDays = () => [...document.querySelectorAll(`${dlgSel} button:not([class*="another-month"])`)]
+      .filter(b => dayCellIso(b))
+    const findDayCell = (iso) => currentMonthDays().find(b => dayCellIso(b) === iso) || null
     // the inputs and the day-grid mount after the dialog node appears — before touching the
     // dialog (initial open AND every reopen), wait for BOTH a valid ISO prefill and a mounted
     // current-month day cell, or a too-early read routes to the wrong branch / findDay sees an
@@ -1797,8 +1849,7 @@ tv.setTestingPeriod = async (from, to, label) => {
     const dlgReady = async () => {
       for (let i = 0; i < 20; i++) {
         const cur = readDlgInputs()
-        if (isoRe.test(cur.from) && isoRe.test(cur.to)
-            && document.querySelector(`${dlgSel} button[data-day]:not([class*="another-month"])`))
+        if (isoRe.test(cur.from) && isoRe.test(cur.to) && currentMonthDays().length)
           return true
         await page.waitForTimeout(100)
       }
@@ -1826,18 +1877,18 @@ tv.setTestingPeriod = async (from, to, label) => {
       // navigate (max 36 month-hops) until the target day exists as a CURRENT-month cell;
       // after each hop, poll for the shown month to actually change (a fixed wait raced slow renders)
       for (let hops = 0; hops < 36; hops++) {
-        const el = document.querySelector(`${dlgSel} button[data-day="${iso}"]:not([class*="another-month"])`)
+        const el = findDayCell(iso)
         if (el) return el
-        const anyCur = document.querySelector(`${dlgSel} button[data-day]:not([class*="another-month"])`)
+        const anyCur = currentMonthDays()[0]
         if (!anyCur) return null
-        const cur = anyCur.getAttribute('data-day').slice(0, 7)
+        const cur = dayCellIso(anyCur).slice(0, 7)
         const want = iso.slice(0, 7)
         if (want === cur) return null // month shown but day cell absent
         if (!navClick(want < cur ? 'Previous month' : 'Next month')) return null
         for (let w = 0; w < 10; w++) {
           await page.waitForTimeout(100)
-          const now = document.querySelector(`${dlgSel} button[data-day]:not([class*="another-month"])`)
-          if (now && now.getAttribute('data-day').slice(0, 7) !== cur) break
+          const now = currentMonthDays()[0]
+          if (now && dayCellIso(now).slice(0, 7) !== cur) break
         }
       }
       return null
@@ -2264,6 +2315,11 @@ tv.checkIsNewVersion = async (timeout = 1000) => {
 tv.openStrategyTab = async (isDeepTest = false) => {
   // Fast path (current UI): report panel already open. Still make sure the report VIEW is the active
   // light-tab — with "List of Trades" selected the metric DOM is unmounted and nothing downstream can read.
+  if (page.$(SEL.strategyReportContainer) || page.$(SEL.metricsTab)) {
+    try { await tv._ensureMetricsViewActive() } catch {}
+    return true
+  }
+  try { await tv._ensureReportPanelOpen() } catch {}
   if (page.$(SEL.strategyReportContainer) || page.$(SEL.metricsTab)) {
     try { await tv._ensureMetricsViewActive() } catch {}
     return true

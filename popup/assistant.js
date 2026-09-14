@@ -28,21 +28,30 @@ function cloneFilterParamOptions() {
 
 function setOptionsEvents() {
   for(let elId of ['optMinmax', 'optParamName', 'optMethod', 'optFilterOff', 'optFilterMore', 'optFilterLess', 'optFilter2Off', 'optFilter2More', 'optFilter2Less',
-    'optFilterValue', 'optFilterParamName', 'optFilterValue2', 'optFilterParamName2', 'randomDelay', 'shouldTestTF', 'autoBestDownload', 'shouldSkipInitBestResult', 'gaMinTradesTotal']) {
+    'optFilterValue', 'optFilterParamName', 'optFilterValue2', 'optFilterParamName2', 'randomDelay', 'shouldTestTF', 'autoBestDownload', 'shouldSkipInitBestResult',
+    'shouldSkipWaitingForDownload', 'gaMinTradesTotal']) {
+    const el = document.getElementById(elId)
+    if (!el) {
+      console.error(`Can not find id ${elId}`)
+      continue
+    }
     function saveOptListener() {
       saveOptions(elId)
     }
-    document.getElementById(elId).addEventListener('click', saveOptListener)
+    el.addEventListener('click', saveOptListener)
     if (['optFilterParamName', 'optFilterParamName2', 'optFilterValue', 'optFilterValue2', 'optParamName', 'optMethod', 'gaMinTradesTotal'].includes(elId))
-      document.getElementById(elId).addEventListener('change', saveOptListener)
+      el.addEventListener('change', saveOptListener)
     if (['optFilterValue', 'optFilterValue2', 'gaMinTradesTotal'].includes(elId))
-      document.getElementById(elId).addEventListener('input', saveOptListener)
+      el.addEventListener('input', saveOptListener)
   }
   for(let elId of ['deepStartDate', 'backtestDelay', 'dataLoadingTime', 'listOfTF']) {
+    const el = document.getElementById(elId)
+    if (!el)
+      continue
     function saveOptListener() {
       saveOptions(elId)
     }
-    document.getElementById(elId).addEventListener('blur', saveOptListener)
+    el.addEventListener('blur', saveOptListener)
   }
 }
 
@@ -65,9 +74,10 @@ function setClickEvents() {
 function checkIsTVChart() {
   chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
     let message = null
-    if(!tabs[0].url.includes('tradingview.com'))
+    const url = (tabs && tabs[0] && typeof tabs[0].url === 'string') ? tabs[0].url : ''
+    if(!url.includes('tradingview.com'))
       message = 'To work with the extension, activate it on the tab with the opened <a href="https://www.tradingview.com/chart" target="_blank">Tradingview chart</a>.'
-    if(!tabs[0].url.includes('www.tradingview.com') && !tabs[0].url.includes('en.tradingview.com'))
+    if(!url.includes('www.tradingview.com') && !url.includes('en.tradingview.com'))
       message = 'The extension works with the <a href="https://www.tradingview.com/chart" target="_blank">English version</a> of Tradingview.'
     if (message) {
       for(let elId of ['warningSignals', 'warningBacktest']) {
@@ -156,6 +166,8 @@ function setPopupInputsByOptions(getResults) {
       if(document.getElementById('shouldSkipInitBestResult') && iondvOptions.hasOwnProperty('shouldSkipInitBestResult')) {
         document.getElementById('shouldSkipInitBestResult').checked = Boolean(iondvOptions.shouldSkipInitBestResult)
       }
+      if (document.getElementById('autoBestDownload'))
+        document.getElementById('autoBestDownload').checked = iondvOptions.hasOwnProperty('autoBestDownload') ? Boolean(iondvOptions.autoBestDownload) : true
       if(document.getElementById('shouldSkipWaitingForDownload') && iondvOptions.hasOwnProperty('shouldSkipWaitingForDownload')) {
         document.getElementById('shouldSkipWaitingForDownload').checked = Boolean(iondvOptions.shouldSkipWaitingForDownload)
       }
@@ -246,7 +258,8 @@ function sendSignalToActiveTab(signal) {
   }
 
   chrome.tabs.query({active: true, currentWindow: true}, (tabs) => {
-    if(!tabs[0].url.includes('tradingview.com')) {
+    const url = (tabs && tabs[0] && typeof tabs[0].url === 'string') ? tabs[0].url : ''
+    if(!url.includes('tradingview.com')) {
       document.getElementById('msg-text').innerHTML = 'To work with the extension, activate it on the tab with the opened <a href="https://www.tradingview.com/chart" target="_blank">Tradingview chart</a>.'
       document.getElementById('shim').style.display = 'block'
       document.getElementById('msgbx').style.display = 'block'
@@ -258,5 +271,3 @@ function sendSignalToActiveTab(signal) {
     chrome.tabs.sendMessage(tabs[0].id, message, function() {window.close()});
   });
 }
-      if (document.getElementById('autoBestDownload'))
-        document.getElementById('autoBestDownload').checked = iondvOptions.hasOwnProperty('autoBestDownload') ? Boolean(iondvOptions.autoBestDownload) : true
