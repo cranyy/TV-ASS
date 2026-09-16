@@ -4,6 +4,23 @@ All the things listed below are some of the changes I added to this extension th
 
 Again, I cannot express enough credit to the original repo creator https://github.com/akumidv/tradingview-assistant-chrome-extension. All of this is built entirely on his work, and comparatively, is menial in scale or approach. (IN THE PRE AI ERA EVEN!!). So once again, huge, huge acknowledgments toward @akumidv.
 
+## CHANGELOG
+
+### 1.125
+- The status line printed `NaN.00` instead of saying why a value was missing.
+- `Net profit %` disappeared on near-flat candidates. The capital base is now taken from gross profit/loss as well, not just Total PnL.
+
+### 1.124
+- Restored the `Net profit %` optimization targets. TradingView removed the percentage form from the report, so it is derived from the initial capital the other cards imply.
+
+### 1.123
+TradingView rewrote the Strategy Tester report and the extension could no longer read it. Three things were broken:
+- No metrics were read at all, so every cycle logged "error" and nothing was saved — even when the run had produced a real result on screen.
+- Runs stalled on "No report update signal". A missing metric triggered retries that waited for a report change that could never come.
+- Once one cycle returned no trades, every later cycle instantly reported no trades by reading the previous cycle's stale report.
+
+---
+
 ## DIFFERENCES
 
 - **Auto-reconnect** — if TradingView drops its market-data connection during a long run, it reconnects on its own, so the run keeps going while you're away. ( this is a thing i added ages ago, could have been superseded by the newer changes)
@@ -12,7 +29,7 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 - **Two filters at once** — I added a second filter because i wanted to use different combinations of stuff like Profitable ≥ 25% and Max Drawdown ≤ 20%. Theoretically all potential parameters are possible as filters. Could potentially add a third to make it even more granular.
 
-- **Auto-saves every new best** — every time a new winner is reached, it automatically downloads a results file based on your original filters, and again it still always saves the overall best when the run ends as _FINAL.
+- **Auto-saves every new best** — every time a new winner is reached, it automatically downloads a results file, and it still always saves the overall best when the run ends as _FINAL. A candidate that fails your filters is not a winner, so it does not trigger a download — if nothing is downloading mid-run, check your filters first.
 
 - **Reupload to the exact state you started the analysis from** — I was profoundly annoyed at TradingVIew, because I would upload a saved run, and then try to match everything by hand, and the result I had supposedly achieved in the strategy, wasn't even close to what it showed on later uploads, and I couldn't figure out why.
 So now each saved result also remembers the whole setup: symbol, timeframe, session, date range, chart layout, chart type, and every strategy setting. When you reupload that file later it puts the chart back the way it was when you started the strategy, so the result you saved, SHOULD THEORETICALLY BE the one you get on upload.
@@ -137,8 +154,3 @@ Thats it you can use the new one as normal now, it will be called TV-ASS 1.120
 Built entirely on the original TradingView Assistant by Andrei Kuminov (akumidv). See the included [LICENSE](LICENSE).
 
 ---
-
-## CHANGELOG
-
-### 1.123
-Tradingview made changes yet again, making the extension not work, should work now theoretically

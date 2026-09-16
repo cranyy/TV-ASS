@@ -951,10 +951,9 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
 backtest.convertValue = (value) => {
   if (!value)
     return 0
-  // Only NUMERIC values get the scientific-notation expansion below. A non-numeric string falls into it as
-  // soon as it contains an "e" — which the "<metric> missed in data" placeholder always does — and
-  // Number(...) then turns the whole sentence into NaN, rendering the meaningless "NaN.00" in the status
-  // line instead of saying what actually happened. Non-numeric text is passed through untouched.
+  // Only numeric values get the scientific-notation expansion below. Any string containing an "e" — which
+  // the "<metric> missed in data" placeholder does — would otherwise be Number()'d into NaN and shown as
+  // "NaN.00" instead of the actual reason. Non-numeric text passes through untouched.
   const isNumeric = typeof value === 'number'
     ? Number.isFinite(value)
     : /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(String(value))
@@ -1180,10 +1179,9 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
     let lastReadSettled = false
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       startTime = new Date()
-      // A retry that follows a read which SETTLED must not demand another change. The report is already
-      // current — only the harvest came back short — and it will not move again on its own, so asking for
-      // a change can do nothing but burn the whole idle budget and turn a parse miss into a bogus
-      // 'idle-no-update' timeout (adding ~8s per cycle and dropping the row). Re-read the settled report.
+      // A retry after a read that SETTLED must not demand another change: the report is already current and
+      // will not move again, so waiting for one only burns the idle budget and turns a parse miss into a
+      // bogus 'idle-no-update' timeout. Re-read the settled report instead.
       const expectThisRead = attempt > 0 && lastReadSettled ? false : expectReportChange
       res = await tv.getPerformance(testResults, isIgnoreError, expectThisRead)
       lastReadSettled = !!(res && res.error === null)

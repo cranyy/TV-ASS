@@ -69,11 +69,9 @@ const SEL = {
   metricMarginEfficiencyTable: '[data-qa-id="margin-efficiency-table"]',
   metricRunUpsTable: '[data-qa-id="run-ups-table"]',
   metricDrawdownsTable: '[data-qa-id="drawdowns-table"]',
-  // Sep 2026 TV UI: the metric cards are no longer confined to the "Key stats" reportContainer. The same
-  // containerCell component now also renders the "Performance analysis > Breakdown" and
-  // "Trades analysis > Distribution" blocks ([data-qa-id="strategy-report-summary"]), which is where the
-  // metrics that used to live in the report TABLES now are. Scoping to #bottom-area picks up all of them
-  // (12 cells live vs 4 under the old reportContainer-only scope).
+  // The containerCell component renders the "Key stats" cards AND the Breakdown / Distribution blocks
+  // ([data-qa-id="strategy-report-summary"]), which now hold the metrics the report tables used to carry.
+  // Scoping to #bottom-area picks up all of them, not just the Key stats four.
   metricsValueCell: '#bottom-area [class^="containerCell"]',
   // Inside one card: the title is the first container-*; the value is the sibling block, whose number and
   // secondary value are separate spans (they used to be two container-* divs with newline-joined text).
@@ -81,8 +79,7 @@ const SEL = {
   metricCardValue: 'span[class^="value-"]',
   metricCardChange: 'span[class^="change-"]',
 
-  // Sep 2026 TV UI: metrics TradingView no longer renders as cards or tables (notably the closed-trade
-  // Net profit, split All/Long/Short) are drawn as infographic rows.
+  // Metrics rendered as neither cards nor tables — notably the closed-trade Net profit, split All/Long/Short.
   reportInfographic: '#bottom-area [data-qa-id$="-infographic"]',
   reportInfographicBlock: 'div[class^="container-lvsiFrMO"]',
   reportInfographicBlockTitle: 'span[class^="titleText"]',
@@ -90,8 +87,8 @@ const SEL = {
   reportInfographicRowName: 'span[class^="signalName"]',
   reportInfographicRowValue: 'div[class^="value-"]',
 
-  // Sep 2026 TV UI recompute indicator. The legacy .bottom-widgetbar-loading-overlay element still exists
-  // but stays .js-hidden forever, so it can no longer be used to detect an in-flight report.
+  // Recompute indicator. The legacy .bottom-widgetbar-loading-overlay still exists but stays .js-hidden,
+  // so it can no longer detect an in-flight report.
   reportSpinner: '#bottom-area .tv-spinner--shown',
 
   reportSectionRoot: '[class^="backtestingReport"]',
