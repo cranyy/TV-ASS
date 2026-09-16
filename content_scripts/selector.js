@@ -69,7 +69,30 @@ const SEL = {
   metricMarginEfficiencyTable: '[data-qa-id="margin-efficiency-table"]',
   metricRunUpsTable: '[data-qa-id="run-ups-table"]',
   metricDrawdownsTable: '[data-qa-id="drawdowns-table"]',
-  metricsValueCell: '[class^="reportContainer-"] [class^="containerCell"]',
+  // Sep 2026 TV UI: the metric cards are no longer confined to the "Key stats" reportContainer. The same
+  // containerCell component now also renders the "Performance analysis > Breakdown" and
+  // "Trades analysis > Distribution" blocks ([data-qa-id="strategy-report-summary"]), which is where the
+  // metrics that used to live in the report TABLES now are. Scoping to #bottom-area picks up all of them
+  // (12 cells live vs 4 under the old reportContainer-only scope).
+  metricsValueCell: '#bottom-area [class^="containerCell"]',
+  // Inside one card: the title is the first container-*; the value is the sibling block, whose number and
+  // secondary value are separate spans (they used to be two container-* divs with newline-joined text).
+  metricCardTitle: 'div[class^="container-"]',
+  metricCardValue: 'span[class^="value-"]',
+  metricCardChange: 'span[class^="change-"]',
+
+  // Sep 2026 TV UI: metrics TradingView no longer renders as cards or tables (notably the closed-trade
+  // Net profit, split All/Long/Short) are drawn as infographic rows.
+  reportInfographic: '#bottom-area [data-qa-id$="-infographic"]',
+  reportInfographicBlock: 'div[class^="container-lvsiFrMO"]',
+  reportInfographicBlockTitle: 'span[class^="titleText"]',
+  reportInfographicRow: 'div[class^="row-"]',
+  reportInfographicRowName: 'span[class^="signalName"]',
+  reportInfographicRowValue: 'div[class^="value-"]',
+
+  // Sep 2026 TV UI recompute indicator. The legacy .bottom-widgetbar-loading-overlay element still exists
+  // but stays .js-hidden forever, so it can no longer be used to detect an in-flight report.
+  reportSpinner: '#bottom-area .tv-spinner--shown',
 
   reportSectionRoot: '[class^="backtestingReport"]',
   metricSectionSubTab: '[class^="backtestingReport"] button[id][aria-selected]',

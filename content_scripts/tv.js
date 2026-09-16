@@ -2609,46 +2609,116 @@ tv._parseRows = (allReportRowsEl, strategyHeaders, report) => {
 }
 
 
+// Parse one displayed number. Handles TradingView's unicode minus (U+2212), a leading '+', thin/non-breaking
+// spaces inside grouped numbers, a trailing '%', and ACCOUNTING negatives ("(42.50)" / "(1.25%)") which carry
+// their sign in the parentheses only. Returns null when the text holds no number at all.
+tv._parseCardNumber = (text) => {
+  if (typeof text !== 'string') return null
+  const t = text.replace(/\u2212/g, '-').replace(/[\s\u00a0\u202f\u2009]/g, '')
+  if (!t) return null
+  const isAccountingNeg = /^\(.*\)$/.test(t)
+  const m = t.replace(/[()]/g, '').match(/-?\d+(?:\.\d+)?/)
+  if (!m) return null
+  let n = parseFloat(m[0])
+  if (isNaN(n)) return null
+  if (isAccountingNeg && n > 0) n = -n
+  return n
+}
+
+// Read one metric card's primary + secondary value.
+// Sep 2026 TV UI: <div container-*>title</div><div valueBlock><span value-*>−93.15</span><span currency-*>USD</span>
+// <span></span><span change-*>−1.86%</span></div> — the value block has NO newlines, so the old
+// "split innerText on \n" reader produced nothing. Older UIs rendered two container-* divs whose value text
+// WAS newline-separated; that shape is still handled by the fallback below.
+tv._readCardValues = (cellEl) => {
+  const valueEl = cellEl.children[1]
+  if (!valueEl) return null
+  const valueSpan = valueEl.querySelector(SEL.metricCardValue)
+  if (valueSpan) {
+    const changeSpan = valueEl.querySelector(SEL.metricCardChange)
+    return { primary: valueSpan.textContent || '', secondary: changeSpan ? (changeSpan.textContent || '') : '' }
+  }
+  const lines = (valueEl.innerText || '').split('\n').map(s => s.trim()).filter(Boolean)
+  if (!lines.length) return null
+  return { primary: lines[0], secondary: lines.length > 1 ? lines[lines.length - 1] : '' }
+}
+
 tv._parseMetrics = async (report) => {
   const metricsValuesEls = document.querySelectorAll(SEL.metricsValueCell)
   for (let metricEl of metricsValuesEls) {
     if (!metricEl) continue
-    const metricNameAndValEls = metricEl.querySelectorAll('div[class^="container-"]')
-    if (metricNameAndValEls && metricNameAndValEls.length < 2) continue
-    let metricName = normalizeMetricName(metricNameAndValEls[0].innerText || '')
-    let metricValue = metricNameAndValEls[1].innerText || ''
-    if (metricValue && typeof metricValue === 'string') {
-      metricValue = metricValue.replaceAll(' ', ' ').replaceAll('−', '-').trim()
-      // the regex digit class must be single-escaped (\d): a double-escaped class matches a literal backslash + letters (not the digit class), strips every digit, and produces non-numeric card values → "error" each cycle.
-      const digitalValues = metricValue.replaceAll(/([\/\-\d\.\n%])|(.)/g, (a, b) => b || '')
-      let digitOfValuesArr = digitalValues.split('\n')
-      // issue#2 numeric correctness: TradingView cards can render negatives ACCOUNTING-style, e.g. "(42.50) USD" / "(1.25%)". The digit strip above drops the parentheses (so the number parses POSITIVE and contradicts the chart). Detect the parentheses on the ORIGINAL per-line text — the strip preserves '\n', so _rawLines[i] aligns with digitOfValuesArr[i] — and flip the sign. Does NOT touch already-signed values (leading '-') or the drawdown fix above.
-      const _rawLines = metricValue.split('\n')
-      const _isAccountingNeg = (s) => typeof s === 'string' && /\(\s*[\d.,]+\s*%?\s*\)/.test(s)
-      const _applyParenSign = (n, rawLine) => (typeof n === 'number' && !isNaN(n) && n > 0 && _isAccountingNeg(rawLine)) ? -n : n
-      let value0 = null
-      let value1 = null
-      let name1 = null
-      if (digitOfValuesArr.length === 1) {
-        value0 = digitOfValuesArr[0].match(/-?\d+\.?\d*/g)
-      } else {
-        value0 = digitOfValuesArr[0].match(/-?\d+\.?\d*/g)
-        const lastIdx = digitOfValuesArr.length - 1
-        if (digitOfValuesArr[lastIdx].includes('/')) {
-          value1 = digitOfValuesArr[lastIdx]
-          name1 = `${metricName} ratio`
-        } else {
-          value1 = digitOfValuesArr[digitOfValuesArr.length - 1].match(/-?\d+\.?\d*/g)
-          name1 = digitOfValuesArr[digitOfValuesArr.length - 1].endsWith('%') ? `${metricName} %` : `${metricName}_1`
-          // issue#2 ("results don't match the chart"): REMOVED the `if (metricName==='Max equity drawdown') value1 = -1 * value1` negation. TradingView shows Max drawdown as a POSITIVE magnitude (live: "Max drawdown 166.09 USD 3.26%") and this card's absolute value0 is already stored positive (+166.09), so negating only the % produced an exported "Max equity drawdown %: -3.26" that both contradicted the chart (+3.26%) AND disagreed with the absolute and with the table parser (negativeValues at ~tv.js:2177 omits plain "Max equity drawdown"). Leaving the % positive makes card=table=chart consistent and fixes "minimize Max drawdown" (minimizing a negative previously chased the LARGEST drawdown).
+    const titleEl = metricEl.querySelector(SEL.metricCardTitle)
+    if (!titleEl) continue
+    const metricName = normalizeMetricName(titleEl.innerText || '')
+    if (!metricName) continue
+    const vals = tv._readCardValues(metricEl)
+    if (!vals) continue
+
+    const primary = tv._parseCardNumber(vals.primary)
+    report[metricName] = primary === null ? String(vals.primary).trim() : primary
+    report[`${metricName}: All`] = report[metricName]
+
+    const secondary = String(vals.secondary || '').trim()
+    if (secondary) {
+      if (secondary.includes('/')) {
+        // "5/8" = winners/total. Keep the raw ratio under the legacy key AND derive the trade counts:
+        // Total/Winning/Losing trades used to come from the report tables, which this UI no longer renders,
+        // and the GA min-trades gate + the "Total trades" optimization targets read them.
+        report[`${metricName} ratio`] = secondary
+        report[`${metricName} ratio: All`] = secondary
+        const parts = secondary.split('/')
+        const won = tv._parseCardNumber(parts[0])
+        const total = tv._parseCardNumber(parts[1])
+        if (won !== null && total !== null) {
+          report['Winning trades'] = won
+          report['Winning trades: All'] = won
+          report['Total trades'] = total
+          report['Total trades: All'] = total
+          report['Losing trades'] = total - won
+          report['Losing trades: All'] = total - won
         }
+      } else {
+        const name1 = /%$/.test(secondary) ? `${metricName} %` : `${metricName}_1`
+        const v1 = tv._parseCardNumber(secondary)
+        report[name1] = v1 === null ? secondary : v1
+        report[`${name1}: All`] = report[name1]
       }
-      // issue#2 numeric correctness: apply the accounting-negative sign to BOTH card values (value0 from the first line, value1 from the last line). The x/y ratio branch is left untouched.
-      if (Boolean(value0)) report[metricName] = _applyParenSign(parseFloat(value0), _rawLines[0])
-      else report[metricName] = metricValue
-      if (Boolean(value1) && name1) report[name1] = (String(value1).includes('/')) ? value1 : _applyParenSign(parseFloat(value1), _rawLines[_rawLines.length - 1])
-      report[`${metricName}: All`] = report[metricName]
-      if (Boolean(value1) && name1) report[`${name1}: All`] = report[name1]
+    }
+  }
+  return tv._parseInfographics(report)
+}
+
+// Sep 2026 TV UI: the closed-trade Net profit (and its Long/Short split) is no longer a card or a table row —
+// it is the "Profits and losses" infographic. Without this the default optimization target "Net profit: All"
+// does not exist in the harvested report at all, so every cycle is recorded as an error and never logged.
+// Read-only: the rows are parsed as rendered. Nothing here clicks a sub-tab — clicking the report's sub-tabs
+// unmounts TradingView's whole report component (verified live), which wedges the tester for the rest of the run.
+tv.INFOGRAPHIC_METRIC = {
+  'profits and losses': 'Net profit',
+}
+tv.INFOGRAPHIC_ROW_SIDE = {
+  'all signals': 'All',
+  'all': 'All',
+  'long': 'Long',
+  'short': 'Short',
+}
+tv._parseInfographics = (report) => {
+  for (const group of document.querySelectorAll(SEL.reportInfographic)) {
+    for (const block of group.querySelectorAll(SEL.reportInfographicBlock)) {
+      const titleEl = block.querySelector(SEL.reportInfographicBlockTitle)
+      const metricName = tv.INFOGRAPHIC_METRIC[(titleEl?.innerText || '').trim().toLowerCase()]
+      if (!metricName) continue
+      for (const row of block.querySelectorAll(SEL.reportInfographicRow)) {
+        const nameEl = row.querySelector(SEL.reportInfographicRowName)
+        const valEl = row.querySelector(SEL.reportInfographicRowValue)
+        if (!nameEl || !valEl) continue
+        const side = tv.INFOGRAPHIC_ROW_SIDE[(nameEl.innerText || '').trim().toLowerCase()]
+        if (!side) continue
+        const v = tv._parseCardNumber(valEl.innerText || '')
+        if (v === null) continue
+        report[`${metricName}: ${side}`] = v
+        if (side === 'All') report[metricName] = v
+      }
     }
   }
   return report
@@ -3045,6 +3115,9 @@ tv._reportSignature = () => {
   // the empty "This report requires trade data" state is a VALID settled state (these params produced no trades), not "still loading" — return a stable sentinel so tv._waitReportSettled settles on it instead of looping to timeout (error 3 every cycle).
   if (document.querySelector('#bottom-area [class*="emptyStateBlock"]'))
     return '__EMPTY__'
+  // Deliberately NARROWER than SEL.metricsValueCell (which also covers the Breakdown/Distribution blocks):
+  // the freshness oracle must be the "Key stats" cards only, because those are the ones the settle gate and
+  // tv._readSectionTableValidated's anchors reason about. Do not widen this to SEL.metricsValueCell.
   const cells = document.querySelectorAll('[class^="reportContainer-"] [class^="containerCell"]')
   if (!cells.length) return ''
   return [...cells].map(c => (c.innerText || '').replace(/\s+/g, ' ').trim()).join(' || ')   // all headline cards
@@ -3053,6 +3126,8 @@ tv._lastReportSignature = null
 // expectChange=false (baseline/current read): a present, stable report settles immediately (incl. the '__EMPTY__' no-trade state) — nothing was mutated.
 // expectChange=true (post-mutation read): success requires an OBSERVED update — loading overlay seen-then-gone, OR signature changed vs the previous cycle, OR an explicit empty/no-trade state. A stable-but-unchanged report is a diagnostic timeout (settled:false); the old cards are never treated as a valid new result.
 tv._waitReportSettled = async (testResults, expectChange = true) => {
+  // Legacy overlay. Sep 2026 TV UI keeps this element but never un-hides it — SEL.reportSpinner is the live
+  // recompute indicator now. Both are checked so an older UI still resets the idle budget the same way.
   const LOADING = '#bottom-area .bottom-widgetbar-loading-overlay:not(.js-hidden)'
   const prev = tv._lastReportSignature
   // two time budgets: idleBudgetMs bounds NO-signal waiting only (an active recompute — overlay / "Updating report" snackbar / moving signature — resets it); activeHardCapMs is a generous total-elapsed backstop for a hung report. Invariant: a stable populated post-mutation report with NO observed update still FAILS CLOSED ('idle-no-update') and never parses stale cards. The Update-report fallback is mutation-only (expectChange===true) and resets the idle timer after clicking ('update-no-effect' if nothing follows).
@@ -3060,13 +3135,19 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
   const baseMs = ((testResults && testResults.dataLoadingTime) ? testResults.dataLoadingTime * 1000 : 0) || 8000
   const idleBudgetMs = isDeep ? baseMs * 2 : baseMs                       // bound on NO-signal (idle) waiting; active recompute does not count against it
   const activeHardCapMs = Math.max(baseMs * 10, isDeep ? 600000 : 300000) // generous backstop: only a hung/never-settling report can hit this
+  // Cap on a CONTINUOUS active signal that makes no progress. The spinner/"Updating report" branch resets the
+  // idle budget, so a spinner that stays up holds the gate all the way to activeHardCapMs (measured: one cycle
+  // idled 136s on a stuck spinner). Any real progress — the report signature moving — resets this streak, so a
+  // genuinely long recompute is unaffected; only a stalled indicator hits it. Scales with the user's
+  // "data loading time" setting, which is the knob for "how long do I wait for the report".
+  const activeStallCapMs = Math.max(idleBudgetMs * 3, isDeep ? 120000 : 30000)
   const tick = 100
   const allowUpdateFallback = expectChange === true
   const STUCK_MS = 1500
   const snackText = () => { const s = document.querySelector('#snackbar-container'); return s ? (s.innerText || '') : '' }
-  let totalElapsed = 0, idleElapsed = 0, sawLoading = false, changed = false, stable = 0, clickedUpdate = false, updPresentMs = 0
+  let totalElapsed = 0, idleElapsed = 0, sawLoading = false, changed = false, stable = 0, clickedUpdate = false, updPresentMs = 0, activeStreakMs = 0
   let lastSig = tv._reportSignature()
-  const diag = (extra) => Object.assign({ totalElapsed, idleElapsed, sawLoading, changed, clickedUpdate, idleBudgetMs, activeHardCapMs }, extra)
+  const diag = (extra) => Object.assign({ totalElapsed, idleElapsed, activeStreakMs, sawLoading, changed, clickedUpdate, idleBudgetMs, activeHardCapMs, activeStallCapMs }, extra)
   // single idle-timeout for every no-signal branch: spend the idle budget then return the timeout diag, so a no-signal report can never wait all the way to activeHardCapMs. Active recompute / signature movement reset idleElapsed inline and never call this.
   const addIdle = () => {
     idleElapsed += tick
@@ -3084,7 +3165,20 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
     }
     await page.waitForTimeout(tick)
     totalElapsed += tick
-    if (page.$(LOADING) || /updating report/i.test(snackText())) { sawLoading = true; stable = 0; updPresentMs = 0; idleElapsed = 0; continue }   // ACTIVE recompute -> reset idle, keep waiting (does not count against idleBudget)
+    if (page.$(LOADING) || page.$(SEL.reportSpinner) || /updating report/i.test(snackText())) {   // ACTIVE recompute -> reset idle, keep waiting (does not count against idleBudget)
+      sawLoading = true; stable = 0; updPresentMs = 0; idleElapsed = 0
+      // the signature is only sampled below when NO indicator is up, so sample it here too: a recompute that
+      // is actually producing new numbers must reset the stall streak, or a long-but-healthy run would trip it
+      const liveSig = tv._reportSignature()
+      if (liveSig && liveSig !== lastSig) { lastSig = liveSig; activeStreakMs = 0 }
+      else activeStreakMs += tick
+      if (activeStreakMs >= activeStallCapMs) {                                  // indicator up but nothing moving -> stalled, not progressing
+        if (!expectChange) tv._lastReportSignature = tv._reportSignature()
+        return diag({ settled: false, timedOut: true, reason: 'active-stall' })
+      }
+      continue
+    }
+    activeStreakMs = 0
     // FALLBACK (last resort, mutation reads only): an "Update report" button means the visible report is STALE. Don't settle on it; after it lingers STUCK_MS, click once to force the refresh and RESET the idle timer so the forced recompute has room to appear. Only the real overlay/"Updating report"/signature change that follows counts — a failed/no-op click can never settle stale data.
     if (allowUpdateFallback && !clickedUpdate) {
       const updBtn = page.$(SEL.strategyReportUpdate)
@@ -3110,8 +3204,17 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
     if (sig !== lastSig) { stable = 0; lastSig = sig; idleElapsed = 0; continue } // value still moving -> signal, reset idle
     stable++
     const isEmpty = sig === '__EMPTY__'                                           // explicit no-trade result (valid settled state)
-    // '__EMPTY__' ("This report requires trade data") is a TERMINAL TV state, not a loading state (the overlay/"Updating report" branch above already waits through the real recompute and is checked first each tick), and it carries no numbers — so an empty report settles a mutation read too. Otherwise a no-trade config (empty-after-empty) could never settle → 8s error-3 timeout → retry → hang.
-    const observedUpdate = sawLoading || changed || isEmpty
+    // '__EMPTY__' ("This report requires trade data") is a TERMINAL TV state, not a loading state, and it
+    // carries no numbers — so a NEWLY empty report settles a mutation read too.
+    // But it only proves anything when the report was NOT already empty going in. Once one candidate comes
+    // back empty, the next cycle sees the SAME stale '__EMPTY__' the instant the Update-report click lands
+    // and would settle on it ~100ms later, before TradingView has recomputed anything — recording "no trades"
+    // for every remaining candidate no matter what its parameters do (measured live: cycles 2-5 each settled
+    // in 1.61s = STUCK_MS + one tick, sawLoading=false, changed=false, and the whole run collapsed to
+    // "no trades"). So empty-after-empty must wait for a REAL recompute signal; the spinner /
+    // "Updating report" / a signature change supplies it, and the idle budget still bounds the wait.
+    const freshEmpty = isEmpty && prev !== '__EMPTY__'
+    const observedUpdate = sawLoading || changed || freshEmpty
     // overlay-only settles (loading seen but the values never changed) get a longer stability window:
     // the cards can re-render a beat AFTER the overlay lifts, and 100ms of stale-card stability was
     // enough to settle on the previous cycle's numbers. 300ms gives the late re-render room to move
@@ -3173,6 +3276,7 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
     const detail =
       s.reason === 'active-timeout'   ? `TradingView was still recomputing the report after ${secs(s.totalElapsed)}s (active recompute exceeded the ${secs(s.activeHardCapMs)}s safety cap).` :
       s.reason === 'update-no-effect' ? `The "Update report" button was clicked but no report update followed within ${secs(s.idleElapsed)}s. If the Strategy Tester is showing "List of trades", switch it to the report view (left toolbar toggle).` :
+      s.reason === 'active-stall'     ? `TradingView showed the report as updating for ${secs(s.activeStreakMs)}s without producing any new value (stalled recompute; raise "data loading time" if this strategy is genuinely this slow).` :
                                         `No report update signal (no loading overlay, no value change) within ${secs(s.idleElapsed)}s after the parameter change.`
     return {
       error: 3,

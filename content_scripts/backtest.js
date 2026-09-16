@@ -1168,17 +1168,24 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
     let parseTime = 0
     const maxRetries = 3
     const retryWaitMs = 200
+    let lastReadSettled = false
     for (let attempt = 0; attempt < maxRetries; attempt++) {
       startTime = new Date()
-      res = await tv.getPerformance(testResults, isIgnoreError, expectReportChange)
+      // A retry that follows a read which SETTLED must not demand another change. The report is already
+      // current — only the harvest came back short — and it will not move again on its own, so asking for
+      // a change can do nothing but burn the whole idle budget and turn a parse miss into a bogus
+      // 'idle-no-update' timeout (adding ~8s per cycle and dropping the row). Re-read the settled report.
+      const expectThisRead = attempt > 0 && lastReadSettled ? false : expectReportChange
+      res = await tv.getPerformance(testResults, isIgnoreError, expectThisRead)
+      lastReadSettled = !!(res && res.error === null)
       parseTime = Math.round((new Date() - startTime) / 1000 * 10) / 10
       const hasMetric = res && res.error === null && res.data && typeof res.data[testResults.optParamName] !== 'undefined'
       // don't retry a settled + populated report that just lacks the target metric: its metric set is conclusive (e.g. optParamName ": Long" but the report exposes only ": All" — zero Long/Short cells), so retrying re-parses the same schema for nothing. A terminal no-trade '__EMPTY__' is likewise definitive; an error-3 settle timeout still retries (its data is empty {}).
       const reportPopulated = res && res.error === null && res.data && Object.keys(res.data).some(k => k && k !== 'comment' && !k.startsWith('_'))
       const metricAbsentOnSettledReport = reportPopulated && !hasMetric
-      // a structured error-3 settle timeout (idle-no-update / active-timeout / update-no-effect) is deterministic — retrying just multiplies the stall, so break immediately. A legacy error-3 without structured settle still retries as before.
+      // a structured error-3 settle timeout (idle-no-update / active-timeout / update-no-effect / active-stall) is deterministic — retrying just multiplies the stall, so break immediately. A legacy error-3 without structured settle still retries as before.
       const deterministicSettleTimeout = res.error === 3 && res.settle &&
-        (res.settle.reason === 'idle-no-update' || res.settle.reason === 'active-timeout' || res.settle.reason === 'update-no-effect')
+        (res.settle.reason === 'idle-no-update' || res.settle.reason === 'active-timeout' || res.settle.reason === 'update-no-effect' || res.settle.reason === 'active-stall')
       const shouldRetry = !hasMetric && !res.empty && !metricAbsentOnSettledReport && !deterministicSettleTimeout && !isIgnoreError && (res.error === 1 || res.error === 2 || res.error === 3 || res.error === null)
       if (!shouldRetry || attempt === maxRetries - 1)
         break
