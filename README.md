@@ -140,24 +140,5 @@ Built entirely on the original TradingView Assistant by Andrei Kuminov (akumidv)
 
 ## CHANGELOG
 
-### 1.122 — The extension window wouldn't open properly (September 2026)
-
-Fixes [issue #4](https://github.com/cranyy/TV-ASS/issues/4), plus everything that turned up while chasing it.
-
-- **The popup opened as a thin unusable strip** — instead of a 600px window you got a sliver about 25px wide with nothing you could click. A styling change in the previous version made the popup's width depend on the popup's own width, and Chrome and Edge resolve that to almost nothing while they are still measuring the window. The width is pinned again, so it opens at the proper size in both browsers.
-
-- **A startup error was silently killing three settings** — the popup threw an error while wiring up its inputs and stopped right there, which meant *Backtest delay*, *Data loading time* and the *timeframes list* never got connected to the save code. You could type a value, close the popup, and it was simply gone. All three save again.
-
-- **"Automatically download each new best config" remembers its setting** — the line that restored that checkbox had ended up outside the function that runs on open, so the box always came back ticked no matter what you chose.
-
-- **Opening the popup on a non-TradingView tab no longer errors** — on pages the extension cannot read (browser settings pages, the add-on store, PDFs) it now just shows the usual "open a TradingView chart" notice.
-
-- **Testing period restore works again** — it was broken in two separate ways:
-  - TradingView changed how the date picker labels its day cells and the extension was still looking for the old marker, so the calendar never looked ready and **every** upload carrying an exact date range failed with *"dialog did not finish loading"*. It now understands both the old and the new format.
-  - With the Strategy Tester panel collapsed, the date button does not exist on the page at all, so the period could not be read or set. The panel is now opened automatically first, the same way the report reader already did it.
-
-- **Preset periods are no longer reported as failed** — choosing something like *Entire history* or *Available chart range* does work, but the button afterwards shows real dates rather than the preset name, and the old check only compared that name. It now confirms the choice the way TradingView marks it in the menu.
-
-- **Switching chart layouts no longer reports "done" too early** — an upload could start applying your ticker, timeframe and period while the new layout was still loading, only for the layout to wipe them. It now waits for the layout's content to actually finish first.
-
-Unchanged: if a saved run's **end** date differs from the chart's current end date, TradingView still only accepts that change from a real mouse click, so the upload leaves your period untouched and tells you exactly which two dates to click.
+### 1.123
+Tradingview made changes yet again, making the extension not work, should work now theoretically
