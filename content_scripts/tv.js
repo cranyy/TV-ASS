@@ -2701,17 +2701,34 @@ tv._parseMetrics = async (report) => {
 // Accuracy: the base is constant across a run, so ranking by "Net profit %" is identical to ranking by
 // "Net profit" — the optimizer picks the same winner either way. Only the reported figure carries the
 // rounding of the 2-dp percentage TradingView prints (~0.001 percentage points).
+// Cards whose percentage is stated against the initial capital, so their absolute/percent pair inverts to
+// that capital. Gross profit/loss come FIRST because they are always larger in magnitude than net, and the
+// printed percentage only carries 2 decimals: the bigger the percentage, the finer the recovered base
+// (relative error ~ 0.005/|pct|). A near-flat candidate (live: Total PnL -0.51 / -0.01%) cannot invert its
+// own pair at all, which is exactly when the gross figures still can.
+tv.CAPITAL_BASE_SOURCES = ['Gross profit', 'Gross loss', 'Total P&L']
+tv._capitalBaseFromCards = (report) => {
+  let best = null
+  for (const name of tv.CAPITAL_BASE_SOURCES) {
+    const abs = report[name]
+    const pct = report[`${name} %`]
+    if (typeof abs !== 'number' || typeof pct !== 'number') continue
+    if (!isFinite(abs) || !isFinite(pct)) continue
+    if (Math.abs(pct) < 0.05) continue                       // 2-dp percent too coarse to invert reliably
+    const base = abs / (pct / 100)
+    if (!isFinite(base) || base <= 0) continue
+    if (!best || Math.abs(pct) > Math.abs(best.pct)) best = { base, pct }
+  }
+  return best ? best.base : null
+}
 tv._deriveNetProfitPercent = (report) => {
-  const abs = report['Total P&L']
-  const pct = report['Total P&L %']
-  if (typeof abs !== 'number' || typeof pct !== 'number') return report
-  if (Math.abs(abs) < 1 || Math.abs(pct) < 0.01) return report      // too small to recover a base safely
-  const base = abs / (pct / 100)
-  if (!isFinite(base) || base <= 0) return report
+  const base = tv._capitalBaseFromCards(report)
+  if (!base) return report
   for (const side of ['All', 'Long', 'Short']) {
     const np = report[`Net profit: ${side}`]
-    if (typeof np !== 'number') continue
+    if (typeof np !== 'number' || !isFinite(np)) continue
     const v = Math.round((np / base) * 10000) / 100
+    if (!isFinite(v)) continue
     report[`Net profit %: ${side}`] = v
     if (side === 'All') report['Net profit %'] = v
   }

@@ -951,6 +951,15 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
 backtest.convertValue = (value) => {
   if (!value)
     return 0
+  // Only NUMERIC values get the scientific-notation expansion below. A non-numeric string falls into it as
+  // soon as it contains an "e" — which the "<metric> missed in data" placeholder always does — and
+  // Number(...) then turns the whole sentence into NaN, rendering the meaningless "NaN.00" in the status
+  // line instead of saying what actually happened. Non-numeric text is passed through untouched.
+  const isNumeric = typeof value === 'number'
+    ? Number.isFinite(value)
+    : /^\s*[-+]?(\d+\.?\d*|\.\d+)([eE][-+]?\d+)?\s*$/.test(String(value))
+  if (!isNumeric)
+    return String(value)
   let s = String(value)                          // FULL shortest round-trip precision (1.192391239139131 stays whole)
   if (/e/i.test(s))                              // defensive: expand any scientific notation (out-of-range tiny/huge; never in normal metric range)
     s = Number(value).toFixed(12).replace(/0+$/, '').replace(/\.$/, '')
