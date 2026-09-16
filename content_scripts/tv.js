@@ -2685,7 +2685,37 @@ tv._parseMetrics = async (report) => {
       }
     }
   }
-  return tv._parseInfographics(report)
+  return tv._deriveNetProfitPercent(tv._parseInfographics(report))
+}
+
+// Sep 2026 TV UI publishes Net profit ONLY as an absolute (the "Profits and losses" infographic) — the
+// percentage form is gone from the whole report, so the "Net profit %: All/Long/Short" optimization targets
+// would simply not exist.
+// Every P&L card still states its own value as a percentage of the SAME base (the initial capital): live,
+// Total PnL 138.46/2.77%, Gross profit 104.98/2.10% and Gross loss 102.32/2.05% all resolve to ~5000, which
+// matches the "5 K USD" initial-capital pill. So the base is recovered from the Total P&L card's OWN
+// absolute/percent pair — TradingView's own ratio, not a capital value assumed by us — and Net profit is
+// expressed on it.
+// Max drawdown % must NEVER be used as the source: it is measured against peak equity, not initial capital
+// (156.22/3.09% -> ~5056), and would put every derived percentage on the wrong base.
+// Accuracy: the base is constant across a run, so ranking by "Net profit %" is identical to ranking by
+// "Net profit" — the optimizer picks the same winner either way. Only the reported figure carries the
+// rounding of the 2-dp percentage TradingView prints (~0.001 percentage points).
+tv._deriveNetProfitPercent = (report) => {
+  const abs = report['Total P&L']
+  const pct = report['Total P&L %']
+  if (typeof abs !== 'number' || typeof pct !== 'number') return report
+  if (Math.abs(abs) < 1 || Math.abs(pct) < 0.01) return report      // too small to recover a base safely
+  const base = abs / (pct / 100)
+  if (!isFinite(base) || base <= 0) return report
+  for (const side of ['All', 'Long', 'Short']) {
+    const np = report[`Net profit: ${side}`]
+    if (typeof np !== 'number') continue
+    const v = Math.round((np / base) * 10000) / 100
+    report[`Net profit %: ${side}`] = v
+    if (side === 'All') report['Net profit %'] = v
+  }
+  return report
 }
 
 // Sep 2026 TV UI: the closed-trade Net profit (and its Long/Short split) is no longer a card or a table row —
