@@ -9,8 +9,14 @@ const SEL = {
   // Jun 2026 TV UI stripped data-name off the chart legend; use hashed-class prefixes
   tvLegendIndicatorItem: 'div[class^="legend-"] div[class^="sourcesWrapper-"] div[class^="sources-"] div[class*="item-"][class*="study-"]',
   tvLegendIndicatorItemTitle: 'div[class*="titleWrapper-"][class*="mainTitle-"] [class*="title-"]',
-  // Jun 2026 TV UI: locate the active backtested strategy's legend row + its Settings gear
-  legendActiveStrategyMarker: '[title="Active strategy"]',
+  // Jun 2026 TV UI: locate the active backtested strategy's legend row + its Settings gear.
+  // The row's status pill carries title="Active strategy" only while it is the sole status; once the
+  // strategy also has a runtime error the title becomes "Runtime error: … · Active strategy" and the
+  // exact-title match fails, so the icon's own class is the primary marker.
+  legendActiveStrategyMarker: '[class*="statusItem-"][class*="activeStrategy-"], [title="Active strategy"]',
+  // status pill of a legend row (title lists every status, e.g. "Runtime error: … · Active strategy")
+  legendStatusPill: '[data-role="statuses-pill"], [data-qa-id="legend-source-item-status"]',
+  legendStatusItem: '[class*="statusItem-"]',
   legendItemSettingsButton: 'button[aria-label="Settings"]',
   tvDialogRoot: '#overlap-manager-root',
   indicatorTitle: '#overlap-manager-root div[data-name="indicator-properties-dialog"] [class^="container"] div[class^="title"]',

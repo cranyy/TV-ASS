@@ -2162,6 +2162,35 @@ tv._getActiveStrategyName = () => {
   return tv.getStrategyNameFromPopup()
 }
 
+// Legend status of the strategy the Tester reports on. TradingView flags a failed script with a status
+// icon on its legend row and lists every status in the pill's title ("Runtime error: RE10106 · Active
+// strategy"). A strategy in this state produces no new report however its inputs change, so the settle
+// gate reads it to fail a cycle at once instead of waiting the whole idle budget.
+tv.getActiveStrategyStatus = (indicatorTitle = null) => {
+  const items = document.querySelectorAll(SEL.tvLegendIndicatorItem)
+  let row = null
+  for (const it of items) {
+    if (it.querySelector(SEL.legendActiveStrategyMarker)) { row = it; break }
+  }
+  if (!row && indicatorTitle) {
+    const matches = [...items].filter(it => {
+      const t = it.querySelector(SEL.tvLegendIndicatorItemTitle)
+      return t && normalizeTitle(t.innerText) === normalizeTitle(indicatorTitle)
+    })
+    if (matches.length === 1) row = matches[0]
+  }
+  if (!row)
+    return { found: false, active: false, error: false, title: '', message: '', name: '' }
+  const pill = row.querySelector(SEL.legendStatusPill)
+  const title = pill ? (pill.getAttribute('title') || '') : ''
+  const classes = [...row.querySelectorAll(SEL.legendStatusItem)].map(e => typeof e.className === 'string' ? e.className : '').join(' ')
+  const error = /runtime error|timed out/i.test(title) || /\b(?:hasError|dataProblemHigh)-/.test(classes)
+  // the pill title joins the statuses with " · "; drop the active-strategy part so only the problem is shown
+  const message = title.split('·').map(t => t.trim()).filter(t => t && !/^active strategy$/i.test(t)).join(' · ')
+  const nameEl = row.querySelector(SEL.tvLegendIndicatorItemTitle)
+  return { found: true, active: !!row.querySelector(SEL.legendActiveStrategyMarker), error, title, message, name: nameEl ? nameEl.innerText.trim() : '' }
+}
+
 tv.getStrategyNameFromPopup = () => {
   const strategyTitleEl = page.$(SEL.indicatorTitle)
   if (strategyTitleEl)
@@ -3191,6 +3220,13 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
     }
     return null
   }
+  // A runtime error on the active strategy (e.g. "Calculation timed out") means TradingView will not deliver a
+  // report for this combination. The status clears the moment a new run starts, so once a recompute was seen the
+  // status is this combination's verdict and wins over the empty/no-trade state the failed run leaves behind.
+  // Without an observed recompute it must hold for RUNTIME_ERROR_STABLE_MS, so a status left over from the
+  // previous combination cannot fail a run that is still about to start.
+  const RUNTIME_ERROR_STABLE_MS = 3000
+  let runtimeErrorMs = 0
   while (true) {
     // generous hard backstop on TOTAL time — reached only by an actively-recomputing-but-hung (or otherwise never-settling) report, since every progress signal below resets idleElapsed, never totalElapsed
     if (totalElapsed >= activeHardCapMs) {
@@ -3200,7 +3236,7 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
     await page.waitForTimeout(tick)
     totalElapsed += tick
     if (page.$(LOADING) || page.$(SEL.reportSpinner) || /updating report/i.test(snackText())) {   // ACTIVE recompute -> reset idle, keep waiting (does not count against idleBudget)
-      sawLoading = true; stable = 0; updPresentMs = 0; idleElapsed = 0
+      sawLoading = true; stable = 0; updPresentMs = 0; idleElapsed = 0; runtimeErrorMs = 0
       // the signature is only sampled below when NO indicator is up, so sample it here too: a recompute that
       // is actually producing new numbers must reset the stall streak, or a long-but-healthy run would trip it
       const liveSig = tv._reportSignature()
@@ -3213,6 +3249,18 @@ tv._waitReportSettled = async (testResults, expectChange = true) => {
       continue
     }
     activeStreakMs = 0
+    if (expectChange) {
+      const status = tv.getActiveStrategyStatus()
+      if (status.error) {
+        runtimeErrorMs += tick
+        if (sawLoading || runtimeErrorMs >= RUNTIME_ERROR_STABLE_MS) {
+          tv._lastReportSignature = tv._reportSignature()
+          return diag({ settled: false, timedOut: false, reason: 'runtime-error', runtimeError: status.message || status.title })
+        }
+      } else {
+        runtimeErrorMs = 0
+      }
+    }
     // FALLBACK (last resort, mutation reads only): an "Update report" button means the visible report is STALE. Don't settle on it; after it lingers STUCK_MS, click once to force the refresh and RESET the idle timer so the forced recompute has room to appear. Only the real overlay/"Updating report"/signature change that follows counts — a failed/no-op click can never settle stale data.
     if (allowUpdateFallback && !clickedUpdate) {
       const updBtn = page.$(SEL.strategyReportUpdate)
@@ -3300,6 +3348,15 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
   await tv._ensureMetricsViewActive()
   // MANDATORY fail-closed settle gate: wait for the report to actually update (loading overlay seen OR report-signature change vs the previous cycle), then stabilise. If it does NOT settle in the window, return error 3 with EMPTY data — NEVER parse the stale visible cards. backtest.js retries on error 3, so a slow report gets more attempts before being skipped.
   const settleRes = await tv._waitReportSettled(testResults, expectChange)
+  if (!settleRes.settled && settleRes.reason === 'runtime-error') {
+    return {
+      error: 2,
+      message: `TradingView reports a runtime error for the active strategy (${settleRes.runtimeError}). No report is produced for these parameter values.`,
+      data: {},
+      runtimeError: settleRes.runtimeError,
+      settle: { reason: 'runtime-error', totalElapsed: settleRes.totalElapsed, idleElapsed: settleRes.idleElapsed, timedOut: false }
+    }
+  }
   if (!settleRes.settled) {
     const s = settleRes
     const secs = (ms) => Math.round((ms || 0) / 1000)
@@ -3368,6 +3425,23 @@ tv.getPerformance = async (testResults, isIgnoreError = false, expectChange = tr
       .replace(/\s+—\s+/g, '--')   // Em-dash to double hyphen: "Jan 27 2026--Feb 3 2026"
       .replace(/\s+/g, '-')        // Spaces to hyphens: "Jan-27-2026--Feb-3-2026"
       .toLowerCase()               // Lowercase: "jan-27-2026--feb-3-2026"
+  }
+
+  // An empty ("requires trade data") report on a strategy the legend flags with an error is NOT a real
+  // no-trade result — the script errored, so TradingView drew no trades. Disambiguate the two empties by the
+  // legend status so the caller's runtime-error streak counts it (a genuine no-trade empty has no error pill).
+  if (settleRes.empty === true && expectChange) {
+    let status = { error: false }
+    try { status = tv.getActiveStrategyStatus() } catch {}
+    if (status.error) {
+      return {
+        error: 2,
+        message: `TradingView reports a runtime error for the active strategy (${status.message || status.title}). No report is produced for these parameter values.`,
+        data: {},
+        runtimeError: status.message || status.title,
+        settle: { reason: 'runtime-error', totalElapsed: settleRes.totalElapsed, idleElapsed: settleRes.idleElapsed, timedOut: false }
+      }
+    }
   }
 
   // surface the terminal no-trade state: settleRes.empty===true means the gate settled on '__EMPTY__' ("requires trade data") — a definitive zero-trade result, not a transient failure. The flag lets the caller skip the (pointless) retries; error stays null (not an error, just no trades and no optParamName to compete).

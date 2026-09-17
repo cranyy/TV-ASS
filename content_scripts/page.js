@@ -23,7 +23,65 @@ page.$ = function (selector) {
   }
 }
 
-page.waitForTimeout = async (timeout = 2500) => new Promise(resolve => setTimeout(resolve, timeout))
+// Sleep that keeps its pace in a hidden tab. The browser clamps a hidden page's timers to one tick per second,
+// and after five minutes in the background to one per minute, which turns the optimizer's many short waits into
+// a crawl as soon as the user switches tabs or minimizes the window. The extension's service worker
+// (background.js) is not clamped, so a hidden page delegates the wait to it in short chunks; a page timer stays
+// armed as a backstop so an unavailable worker can never leave a run hanging, and a worker that cannot be
+// reached at all switches the page back to its own timers for good.
+page._SLEEP_CHUNK_MS = 20000
+page._bridgeAvailable = true
+page._bridgeSleep = (ms) => new Promise(resolve => {
+  const startedAt = Date.now()
+  let done = false
+  let backstop = null
+  const finish = () => {
+    if (done)
+      return
+    done = true
+    if (backstop)
+      clearTimeout(backstop)
+    resolve()
+  }
+  backstop = setTimeout(finish, ms + 1500)
+  try {
+    chrome.runtime.sendMessage({ iondvSleep: ms }, () => {
+      if (chrome.runtime.lastError) {
+        page._bridgeAvailable = false
+        setTimeout(finish, Math.max(0, ms - (Date.now() - startedAt)))
+        return
+      }
+      finish()
+    })
+  } catch {
+    page._bridgeAvailable = false
+    setTimeout(finish, Math.max(0, ms - (Date.now() - startedAt)))
+  }
+})
+
+page.waitForTimeout = async (timeout = 2500) => {
+  const ms = Math.max(0, Number(timeout) || 0)
+  const hidden = typeof document !== 'undefined' && document.visibilityState === 'hidden'
+  const bridge = page._bridgeAvailable && typeof chrome !== 'undefined' && chrome.runtime && chrome.runtime.id
+  if (hidden && bridge) {
+    let left = ms
+    do {
+      const chunk = Math.min(left, page._SLEEP_CHUNK_MS)
+      await page._bridgeSleep(chunk)
+      left -= chunk
+    } while (left > 0)
+    return
+  }
+  return new Promise(resolve => setTimeout(resolve, ms))
+}
+
+// ask the service worker to exempt this tab from automatic discarding for the run
+page.keepTabAlive = () => {
+  try {
+    chrome.runtime.sendMessage({ iondvKeepTab: true }, () => { void chrome.runtime.lastError })
+  } catch {
+  }
+}
 
 
 page.waitForSelector = async (selector, timeout = 5000, isHide = false, parentEl = null) => {

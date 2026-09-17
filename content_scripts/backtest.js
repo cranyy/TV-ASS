@@ -18,6 +18,8 @@ const MUT_MAX_GENES = 6
 const CEM_NEAR_ANCHOR_SHARE = 0.8
 // consecutive POPULATED reports missing the optimization target (and never once found) before aborting with the "target not in report" error. >1 so a transient parse miss on a VALID metric can't false-abort the run (upstream issues #355/#356 are exactly that false abort). The init baseline miss seeds this streak at 1, so a genuinely-absent target still aborts within ~2 more cycles.
 const METRIC_MISS_ABORT = 3
+// consecutive cycles ending in a TradingView runtime error on the active strategy before the run is stopped
+const RUNTIME_ERROR_ABORT = 3
 // ANTI-DETECTION human pacing. The param setter applies values in ~0.3s, which is robotic; this adds an always-on randomized pause before each setter so there is no fixed machine cadence (randomisation matters as much as duration for looking human). This is the floor even when the popup's backtestDelay option is 0; setting backtestDelay adds further randomized spacing on top (applied per cycle in backtest.delay). This reduces — it does NOT eliminate — TradingView automation-detection risk; nothing can guarantee that.
 // PACING: raise the per-setter human band floor so a few-field edit no longer snaps open/apply/close at robotic speed; add a BOUNDED changed-count term (PER_EDIT × extra fields, capped at EDIT_CAP) so the dwell correlates with how many fields are actually applied without ever growing into late-cycle slug. The cap bounds the changed-count contribution ONLY; the backtestDelay-scaled base stays uncapped so a user's larger backtestDelay is still honored. No term depends on cycle index / population / persisted results / GA history.
 const SETTER_HUMAN_MIN_MS = 900
@@ -789,8 +791,21 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
   const seededBest = hasAnyKeys(testResults.bestPropVal) ? testResults.bestPropVal : {}
   prepareFullBestPropVal(testResults, seededBest, strategyData)
 
+  page.keepTabAlive()
+  // A strategy TradingView already flags on the legend ("Runtime error: …") delivers no report until a
+  // parameter change makes it recalculate, so the baseline read below may see stale cards. Say so up front.
+  let startWarning = ''
+  try {
+    const status = tv.getActiveStrategyStatus(strategyData.name)
+    if (status.error) {
+      startWarning = `<p style="color: red">TradingView shows "${status.message}" on the active strategy. Its report may be stale until a parameter change makes it recalculate.</p>`
+      console.warn(`[TV-ASS] active strategy "${status.name}" starts the run with "${status.message}"`)
+    }
+  } catch {
+  }
+
   // Get best init value and properties values
-  ui.statusMessage('Get the best initial values.')
+  ui.statusMessage('Get the best initial values.' + startWarning)
 
 
   // display baseline (current) separately from best initial value
@@ -887,6 +902,18 @@ backtest.testStrategy = async (testResults, strategyData, allRangeParams) => {
     }
     if (isEnd)
       break
+    // The settle gate turns a legend "Runtime error" into a runtime-error result within seconds. One is a bad
+    // combination; several in a row mean the strategy is not recovering and every further cycle would fail
+    // the same way, so stop and let the final autosave keep the best result so far.
+    if (optRes && optRes.runtimeError) {
+      testResults._runtimeErrorStreak = (testResults._runtimeErrorStreak || 0) + 1
+      if (testResults._runtimeErrorStreak >= RUNTIME_ERROR_ABORT) {
+        await ui.showErrorPopup(`TradingView reported a runtime error for the active strategy on ${testResults._runtimeErrorStreak} cycles in a row (last: ${optRes.runtimeError}). TradingView produces no report while the strategy is in this state, so the run was stopped and the best result so far is being saved. Remove the strategy from the chart and add it again (TradingView's own advice for "Calculation timed out"), or use a shorter testing period or a higher timeframe so the script finishes in time, then run again.`)
+        break
+      }
+    } else if (optRes && optRes.error === null) {
+      testResults._runtimeErrorStreak = 0
+    }
     // FAIL-FAST on an unavailable optimization target. A fully-settled POPULATED report (real metric keys present) that lacks testResults.optParamName means the target name is simply not in this report's metric SCHEMA — and that schema is identical across cycles, so one such report is conclusive. (Root cause: e.g. optParamName "Net profit %: Long" while the Jun-2026 TV report exposes overall ": All" metrics only — zero Long/Short cells in #bottom-area — so the metric is NEVER captured, every cycle "updates successfully" yet records nothing, and the run grinds all cycles fruitlessly.) Abort here with an actionable error listing available targets instead of wasting the whole run.
     // TRANSIENT-TOLERANT (per upstream issues #355/#356: the identical "missing optimization parameter" error is usually a TRANSIENT parse miss, not an absent metric). Upstream's getResWithBestValue sets forceStop on the FIRST populated miss (no tolerance) → false aborts; this version requires METRIC_MISS_ABORT consecutive POPULATED reads missing the target AND the target never once found, so a one-off render/settle hiccup on a VALID metric can't kill the run, while a genuinely-absent target (e.g. "Net profit %: Long" — zero Long/Short cells in this report) still aborts within a few cycles. Any single read that DOES contain the target resets the streak and marks it found (never aborts thereafter).
     if (optRes && optRes.data && typeof optRes.data === 'object') {
@@ -1193,7 +1220,8 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
       // a structured error-3 settle timeout (idle-no-update / active-timeout / update-no-effect / active-stall) is deterministic — retrying just multiplies the stall, so break immediately. A legacy error-3 without structured settle still retries as before.
       const deterministicSettleTimeout = res.error === 3 && res.settle &&
         (res.settle.reason === 'idle-no-update' || res.settle.reason === 'active-timeout' || res.settle.reason === 'update-no-effect' || res.settle.reason === 'active-stall')
-      const shouldRetry = !hasMetric && !res.empty && !metricAbsentOnSettledReport && !deterministicSettleTimeout && !isIgnoreError && (res.error === 1 || res.error === 2 || res.error === 3 || res.error === null)
+      // a runtime error is TradingView's verdict on this combination: re-reading cannot change it
+      const shouldRetry = !hasMetric && !res.empty && !metricAbsentOnSettledReport && !deterministicSettleTimeout && !res.runtimeError && !isIgnoreError && (res.error === 1 || res.error === 2 || res.error === 3 || res.error === null)
       if (!shouldRetry || attempt === maxRetries - 1)
         break
       await page.waitForTimeout(retryWaitMs)
@@ -1214,7 +1242,9 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
     if (res.error === null || isIgnoreError) {
       res['data'] = calculateAdditionValuesToReport(res['data'])
     } else {
-      res['data']['comment'] = res['error'] === 2 ? 'The tradingview error occurred when calculating the strategy based on these parameter values' :
+      res['data']['comment'] = res['error'] === 2 ? (res.runtimeError
+            ? `TradingView runtime error for these parameter values: ${res.runtimeError}. No report was produced.`
+            : 'The tradingview error occurred when calculating the strategy based on these parameter values') :
         res['error'] === 1 ? 'The tradingview calculation process has not started for the strategy based on these parameter values' :
           res['error'] === 3 ? (res.settle
             ? `Report did not settle (${res.settle.reason}) after ${Math.round((res.settle.totalElapsed || 0) / 1000)}s for one combination. Testing of this combination is skipped.`

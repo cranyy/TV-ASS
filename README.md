@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.127
+- Fixed runs getting stuck on a report that never changes: with two copies of the same strategy on the chart, the settings went to the wrong copy once the active one hit a runtime error. Combinations that make TradingView error out are now skipped in seconds instead of waiting out the timeout, and runs keep full speed while the tab is in the background or minimized.
+
 ### 1.126
 - Values over 1,000 were cut at the thousands separator (`16,186.62` read as `16`).
 
@@ -28,7 +31,7 @@ TradingView rewrote the strategy report and the extension could not read it:
 
 - **Auto-reconnect** — if TradingView drops its market-data connection during a long run, it reconnects on its own, so the run keeps going while you're away. ( this is a thing i added ages ago, could have been superseded by the newer changes)
 
-- **Keeps running while minimized** — I hardened it slightly, so all of the processes can easily work in the background and you dont have to have the strategy in your foreground, i.e. you can run 3-4-5 tabs of strategies at once minimized, while doing whatever else you want. ( this is a second thing i added ages ago, could have been superseded by the newer change)
+- **Keeps running while minimized** — browsers slow down hidden tabs, so the extension now runs its waits through a service worker that isn't slowed down. Leave it in a background tab or minimized and it runs at the same speed. Just don't let the browser put the tab to sleep.
 
 - **Two filters at once** — I added a second filter because i wanted to use different combinations of stuff like Profitable ≥ 25% and Max Drawdown ≤ 20%. Theoretically all potential parameters are possible as filters. Could potentially add a third to make it even more granular.
 
