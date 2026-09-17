@@ -2613,10 +2613,21 @@ tv._parseRows = (allReportRowsEl, strategyHeaders, report) => {
 // negatives ("(42.50)") whose sign lives only in the parentheses. Returns null when there is no number.
 tv._parseCardNumber = (text) => {
   if (typeof text !== 'string') return null
-  const t = text.replace(/\u2212/g, '-').replace(/[\s\u00a0\u202f\u2009]/g, '')
+  let t = text.replace(/\u2212/g, '-').replace(/[\s\u00a0\u202f\u2009]/g, '')
   if (!t) return null
   const isAccountingNeg = /^\(.*\)$/.test(t)
-  const m = t.replace(/[()]/g, '').match(/-?\d+(?:\.\d+)?/)
+  t = t.replace(/[()]/g, '')
+  // Thousands separators must go before the number is matched: TradingView groups them ("16,186.62"),
+  // and leaving them in makes the match stop at the first group \u2014 16,186.62 reads as 16.
+  // When both separators are present the LAST one is the decimal point and the other is grouping. With
+  // only commas, a group of exactly three digits is grouping; anything else is a decimal comma. A lone
+  // dot is always left alone so 3-decimal ratios (profit factor 1.372) are never read as 1372.
+  const lastComma = t.lastIndexOf(','), lastDot = t.lastIndexOf('.')
+  if (lastComma !== -1 && lastDot !== -1)
+    t = lastComma > lastDot ? t.replace(/\./g, '').replace(',', '.') : t.replace(/,/g, '')
+  else if (lastComma !== -1)
+    t = /,\d{3}(?!\d)/.test(t) ? t.replace(/,/g, '') : t.replace(',', '.')
+  const m = t.match(/-?\d+(?:\.\d+)?/)
   if (!m) return null
   let n = parseFloat(m[0])
   if (isNaN(n)) return null

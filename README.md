@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.126
+- Any value of 1,000 or more was cut off at the thousands separator: TradingView's `16,186.62` was read as `16`. This hit the status line, the saved spreadsheet, and which run counted as the best one.
+
 ### 1.125
 - The status line printed `NaN.00` instead of saying why a value was missing.
 - `Net profit %` disappeared on near-flat candidates. The capital base is now taken from gross profit/loss as well, not just Total PnL.
