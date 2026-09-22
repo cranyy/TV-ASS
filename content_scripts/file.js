@@ -516,6 +516,33 @@ function containsQuotedBooleanValues(csvText) {
 
 
 
+// TradingView reports most metrics in a single "All" column, and the parser records each of them twice:
+// once under the plain metric name and once under "<name>: All" (optimization targets and filters address
+// metrics by the suffixed name). Both reached the CSV as separate columns holding the same value (issue#7).
+// Keep the suffixed column - it is the name the optimization target and filter lists use - and drop its
+// plain twin. A pair whose values differ in any row is left alone.
+file._dedupeAllColumns = (headers, rowGroups) => {
+  const present = new Set(headers)
+  const sameInEveryRow = (name, allName) => {
+    for (const rows of rowGroups) {
+      if (!Array.isArray(rows)) continue
+      for (const row of rows) {
+        if (!row) continue
+        if (Object.hasOwn(row, name) !== Object.hasOwn(row, allName)) return false
+        if (row[name] !== row[allName]) return false
+      }
+    }
+    return true
+  }
+  const redundant = new Set()
+  for (const header of headers) {
+    const allName = `${header}: All`
+    if (present.has(allName) && sameInEveryRow(header, allName)) redundant.add(header)
+  }
+  return redundant.size ? headers.filter(header => !redundant.has(header)) : headers
+}
+
+
 file.convertResultsToCSV = (testResults) => {
   function prepareValToCSV(value) {
     if (!value)
@@ -541,19 +568,20 @@ file.convertResultsToCSV = (testResults) => {
   _collectHeaders(testResults.perfomanceSummary)
   _collectHeaders(testResults.filteredSummary)
   if (!headers.length) headers.push(...Object.keys(testResults.perfomanceSummary[0]))
+  const outHeaders = file._dedupeAllColumns(headers, [testResults.perfomanceSummary, testResults.filteredSummary])
 
-  let csv = headers.map(header => JSON.stringify(header)).join(',')
+  let csv = outHeaders.map(header => JSON.stringify(header)).join(',')
   csv += '\n'
   testResults.perfomanceSummary.forEach(row => {
-    const rowData = headers.map(key => typeof row[key] === 'undefined' ? '' : prepareValToCSV(row[key]))
+    const rowData = outHeaders.map(key => typeof row[key] === 'undefined' ? '' : prepareValToCSV(row[key]))
     csv += rowData.join(',').replaceAll('\\"', '""')
     csv += '\n'
   })
   if(testResults.filteredSummary && testResults.filteredSummary.length) {
-    csv += headers.map(key => key !== 'comment' ? '' : 'Bellow filtered results of tests') // Empty line
+    csv += outHeaders.map(key => key !== 'comment' ? '' : 'Bellow filtered results of tests') // Empty line
     csv += '\n'
     testResults.filteredSummary.forEach(row => {
-      const rowData = headers.map(key => typeof row[key] === 'undefined' ? '' : prepareValToCSV(row[key]))
+      const rowData = outHeaders.map(key => typeof row[key] === 'undefined' ? '' : prepareValToCSV(row[key]))
       csv += rowData.join(',').replaceAll('\\"', '""')
       csv += '\n'
     })

@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.128
+- Saved results listed every metric twice (`Net profit` and `Net profit: All`) - now one column per metric.
+
 ### 1.127
 - Fixed runs getting stuck on a report that never changes: with two copies of the same strategy on the chart, the settings went to the wrong copy once the active one hit a runtime error. Combinations that make TradingView error out are now skipped in seconds instead of waiting out the timeout, and runs keep full speed while the tab is in the background or minimized.
 
@@ -111,6 +114,8 @@ git clone https://github.com/cranyy/TV-ASS.git
 
 8. Select the directory you unzipped/cloned to in Step 2. 
 
+9. Restart your browser after installing or updating. Tradingview tabs that were already open are still running the old version (or none at all), and the extension buttons do nothing until those tabs are reloaded.
+
 Thats it you can use the new one as normal now, it will be called TV-ASS 1.120
 
 
@@ -144,6 +149,8 @@ git clone https://github.com/cranyy/TV-ASS.git
 7. Click Load Unpacked.
 
 8. Select the directory you unzipped to/cloned to in step 2.
+
+9. Restart your browser after installing or updating. Tradingview tabs that were already open are still running the old version (or none at all), and the extension buttons do nothing until those tabs are reloaded.
 
 Thats it you can use the new one as normal now, it will be called TV-ASS 1.120
 
