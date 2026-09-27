@@ -2198,7 +2198,17 @@ tv.getStrategyNameFromPopup = () => {
   return null
 }
 
+// Removes the dead Strategy Tester watchers TradingView leaves on strategy inputs (see pruneDeadTesterWatchers in
+// page-context.js) so each dialog edit costs the same as on a fresh tab.
+tv.pruneStrategyInputListeners = async () => {
+  try {
+    await tv.callPageAction('pruneStrategyInputListeners', null, 1500)
+  } catch {
+  }
+}
+
 tv.openStrategyParameters = async (indicatorTitle, searchAgainstStrategies = false) => {
+  await tv.pruneStrategyInputListeners()
   const curStrategyTitle = tv.getStrategyNameFromPopup()
   let isOpened = !!curStrategyTitle
   // issue#1 (multiple strategies open): an already-open dialog only counts as "opened" if its title MATCHES the requested strategy. A stale/wrong dialog left open must NOT be scraped as the requested one — close it (Cancel = no save) so the correct dialog is opened below.
@@ -2330,6 +2340,8 @@ tv.checkAndOpenStrategy = async (name, isDeepTest = false) => {
         return null
       }
     }
+  } else {
+    await tv.pruneStrategyInputListeners() // dialog already open, e.g. left open by a params-only upload
   }
   await page.waitForSelector(SEL.indicatorProperty)
   return indicatorTitleEl

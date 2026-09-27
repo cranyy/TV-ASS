@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.129
+- Fixed applying settings getting slower and slower the longer a tab runs.
+
 ### 1.128
 - Saved results listed every metric twice (`Net profit` and `Net profit: All`) - now one column per metric.
 

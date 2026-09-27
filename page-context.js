@@ -115,6 +115,24 @@ window.addEventListener('message', async function (event) {
       }
       break
     }
+    case 'pruneStrategyInputListeners': {
+      let removed = 0
+      try {
+        const cwc = window.TradingView?.bottomWidgetBar?._options?.chartWidgetCollection
+        const acw = cwc?.activeChartWidget?._value || cwc?.activeChartWidget
+        const outerModel = typeof acw?.model === 'function' ? acw.model() : acw?._model
+        const model = outerModel?.m_model || outerModel
+        const sources = typeof model?.strategySources === 'function' ? model.strategySources() : []
+        const watchedValueProto = cwc?.activeChartWidget ? Object.getPrototypeOf(cwc.activeChartWidget) : null
+        if (watchedValueProto && Object.prototype.hasOwnProperty.call(watchedValueProto, 'value') && typeof watchedValueProto.value === 'function')
+          for (const source of sources)
+            removed += pruneDeadTesterWatchers(source?.properties?.()?.childs?.()?.inputs, watchedValueProto)
+      } catch (err) {
+        console.warn('[TV-ASS] pruneStrategyInputListeners error:', err)
+      }
+      window.postMessage({ name: 'iondvPage', action: event.data.action, requestId: event.data.requestId, data: { removed } }, event.origin)
+      break
+    }
     // setChartSession bridge: writes sessionId to chart main series properties (mirrors the applyNodeValue owner-notification pattern)
     case 'setChartSession': {
       try {
@@ -339,6 +357,45 @@ window.addEventListener('message', async function (event) {
       window.postMessage({name: 'iondvPage', action: event.data.action, data: null, message: `Unknown action: ${event.data.action}`}, event.origin)
   }
 })
+
+// TradingView's Strategy Tester subscribes a new watcher to a strategy's `inputs` property on every recalculation
+// and never unsubscribes the previous one, so every later input change re-runs all of them and each rebuilds the
+// whole input list. A watcher is removed only when it is the tester's and nothing listens to its value any more;
+// anything unrecognised is left alone. Its first step is watched.value(), so intercepting that call reaches the
+// watched value without running the getter.
+const INPUT_WATCHER_MEMBER = /^\(\)=>\{(\w+)\.setValue\((\w+)\(\1\.value\(\)\)\)\}$/
+function pruneDeadTesterWatchers(inputs, watchedValueProto) {
+  const entries = inputs?._listeners?._listeners
+  if (!Array.isArray(entries) || typeof inputs.unsubscribeAll !== 'function')
+    return 0
+  const readValue = watchedValueProto.value
+  const stop = {}
+  const dead = []
+  for (const entry of entries) {
+    if (typeof entry.member !== 'function' || !INPUT_WATCHER_MEMBER.test(String(entry.member)))
+      continue
+    let watched = null
+    let intercepted = false
+    watchedValueProto.value = function () { watched = this; throw stop }
+    try {
+      entry.member()
+    } catch (err) {
+      intercepted = err === stop
+    } finally {
+      watchedValueProto.value = readValue
+    }
+    if (!intercepted)
+      break
+    const root = watched._owner || watched
+    const value = readValue.call(watched)
+    if (Array.isArray(root._listeners) && root._listeners.length === 0 &&
+        value !== null && typeof value === 'object' && 'visibleInputs' in value && 'namedInputs' in value)
+      dead.push(entry.object)
+  }
+  for (const owner of dead)
+    inputs.unsubscribeAll(owner)
+  return dead.length
+}
 
 async function previewStrategyTestResults(testResults) {
   if (typeof testResults === 'undefined' || !testResults.hasOwnProperty('perfomanceSummary') || testResults.perfomanceSummary.length === 0)
