@@ -1063,7 +1063,11 @@ async function getInitBestValues(testResults) {
   await backtest.delay(testResults.backtestDelay, testResults.randomDelay)
   const startTime = new Date()
   // baseline "Current parameters" read mutates nothing, so pass expectChange=false: tv._waitReportSettled settles on the stable current report instead of hanging the full wait window and returning error 3 (the "stuck on Get the best initial values" root cause). Only post-mutation reads require an observed update.
-  const currentRes = await tv.getPerformance(testResults, false, false)
+  // Exception: with any range except "Range from chart" TradingView recomputes only on "Update report", so after the inputs
+  // changed (a loaded file, the previous run's best apply) the visible report still belongs to the previous inputs. When that
+  // button is showing, read like a cycle does: click it and accept only an observed update.
+  const isReportStale = !!page.$(SEL.strategyReportUpdate)
+  const currentRes = await tv.getPerformance(testResults, false, isReportStale)
   let baselineValue = null
   let baselinePropVal = null
   if (currentRes && currentRes.data) {

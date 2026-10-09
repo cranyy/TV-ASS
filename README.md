@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.130
+- Fixed the first "Current parameters" row of a run saving the previous settings' numbers when TradingView had not updated the report yet.
+
 ### 1.129
 - Fixed applying settings getting slower and slower the longer a tab runs.
 
