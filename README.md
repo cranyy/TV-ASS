@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.131
+- Brute force results now save every input in each row, so any row can be re-tested on its own.
+
 ### 1.130
 - Fixed the first "Current parameters" row of a run saving the previous settings' numbers when TradingView had not updated the report yet.
 

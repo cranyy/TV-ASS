@@ -2838,7 +2838,7 @@ async function optAnnealingGetEnergy(testResults, propVal) { // TODO 2del test f
 
 // rute Force
 async function optBruteForce(allRangeParams, testResults, bestValue, bestPropVal, optimizationState) {
-  const propVal = {}
+  let propVal = {}
   let paramName = ''
   let msg = ''
   if (!optimizationState.hasOwnProperty('valuesIdx')) {
@@ -2880,6 +2880,10 @@ async function optBruteForce(allRangeParams, testResults, bestValue, bestPropVal
     }
     msg = `"${paramName}" set to ${propVal[paramName]}.`
   }
+  // record every input in the row, as the random method does: brute force varies only the enabled inputs, and a row
+  // that leaves the rest blank cannot be re-tested on its own
+  if (bestPropVal)
+    propVal = expandPropVal(propVal, bestPropVal)
   const res = await backtest.getTestIterationResult(testResults, propVal)
   if (!res || !res.data || res.error !== null)
     return res
