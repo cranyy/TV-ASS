@@ -1178,6 +1178,11 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
         const _hi = Math.max(SETTER_HUMAN_MAX_MS, Math.round(_bd * 1.6)) + _editBonus
         await page.waitForTimeout(randomInteger(_lo, _hi))
         const paramsStart = new Date()
+        // A cycle that gave up waiting can have its report land afterwards. Measure this cycle's report update against
+        // what is on screen now, so that late report is never recorded under these inputs.
+        const shownReport = tv._reportSignature()
+        if (shownReport)
+          tv._lastReportSignature = shownReport
         const isParamsSet = await tv.setStrategyParams(testResults.shortName, setterPayload, testResults.isDeepTest, false)
         if (!isParamsSet) {
           const diag = tv.lastSetStrategyResult || {}

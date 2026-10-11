@@ -1228,8 +1228,12 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
     if (bestResult.hasOwnProperty(`__${paramName}`))
       propVal[paramName] = bestResult[`__${paramName}`]
   })
-  if (isFinalTest)
+  if (isFinalTest) {
     await tv.setStrategyParams(testResults.shortName, propVal)
+    // with any range except "Available chart range" TradingView recomputes only on "Update report", so without this the
+    // chart keeps showing the last tested combination's report next to the best inputs
+    await tv.generateDeepTestReport()
+  }
 
   let text = `All done.\n\n`
   text += bestResult && bestResult.hasOwnProperty(testParams.optParamName) ? 'The best ' + (testResults.isMaximizing ? '(max) ' : '(min) ') + testParams.optParamName + ': ' + backtest.convertValue(bestResult[testParams.optParamName]) : ''

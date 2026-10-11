@@ -6,6 +6,10 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.132
+- Fixed a result row sometimes saving the previous combination's numbers when that combination's report arrived late.
+- After a run, the chart now shows the report of the best parameters instead of the last tested combination's.
+
 ### 1.131
 - Brute force results now save every input in each row, so any row can be re-tested on its own.
 
