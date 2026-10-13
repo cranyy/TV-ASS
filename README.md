@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.133
+- Fixed CSV Import not setting the testing period when its end date differed from the chart's current one; the end date is now set too.
+
 ### 1.132
 - Fixed a result row sometimes saving the previous combination's numbers when that combination's report arrived late.
 - After a run, the chart now shows the report of the best parameters instead of the last tested combination's.

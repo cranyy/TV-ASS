@@ -627,7 +627,7 @@ action._restoreRunContextFromMeta = async (meta, inputsPropVal, fileName, strate
   else
     sessOk = !(await action._setHardSessionVerified(sessionId, original, true))
 
-  // 6. testing period — best-effort (the calendar-state-machine case where the prefill end is later than the target end can fail; we no longer abort — we apply everything else and flag the period to set by hand)
+  // 6. testing period — best-effort (a range TradingView rejects, e.g. a future date or one before the first available data, can fail; we do not abort — we apply everything else and flag the period to set by hand)
   let periodOk = true
   if (dateRange && (dateRange.from || dateRange.label)) {
     const periodRes = await tv.setTestingPeriod(dateRange.from, dateRange.to, dateRange.label)

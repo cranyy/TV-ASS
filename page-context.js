@@ -352,6 +352,46 @@ window.addEventListener('message', async function (event) {
       }
       break
     }
+    // setCustomDateRangeDates: fills the open "Custom date range" dialog through the dialog's own date handlers
+    // (the ones its calendar and inputs call). The calendar accepts an end-date pick only from a trusted mouse click,
+    // so a content script cannot move the end there. Nothing is committed: the caller reads the inputs back and
+    // clicks Select, and TradingView's own checks (future or unavailable dates, same range) still keep Select disabled.
+    case 'setCustomDateRangeDates': {
+      let res
+      try {
+        const toDate = (iso) => {
+          const m = /^(\d{4})-(\d{2})-(\d{2})$/.exec(String(iso || ''))
+          return m ? new Date(+m[1], +m[2] - 1, +m[3]) : null
+        }
+        const from = toDate(event.data?.data?.from)
+        const to = toDate(event.data?.data?.to)
+        const dlg = document.querySelector('[data-name="custom-date-range-dialog"]')
+        const fiberKey = dlg && Object.keys(dlg).find(k => k.startsWith('__reactFiber'))
+        let fiber = fiberKey ? dlg[fiberKey] : null
+        let dates = null
+        for (; fiber && !dates; fiber = fiber.return) {
+          const v = fiber.memoizedProps?.value
+          if (v && typeof v.handleSetStartDate === 'function' && typeof v.handleSetEndDate === 'function')
+            dates = v
+        }
+        if (!from || !to)
+          res = { success: false, error: 'from and to must be YYYY-MM-DD' }
+        else if (!dlg)
+          res = { success: false, error: 'the Custom date range dialog is not open' }
+        else if (!dates)
+          res = { success: false, error: 'the dialog\'s date handlers were not found (TradingView changed the dialog)' }
+        else {
+          dates.handleSetStartDate(from)
+          dates.handleSetEndDate(to)
+          res = { success: true }
+        }
+      } catch (err) {
+        console.warn('[TV-ASS] setCustomDateRangeDates error:', err)
+        res = { success: false, error: err?.message || String(err) }
+      }
+      window.postMessage({ name: 'iondvPage', action: event.data.action, requestId: event.data.requestId, data: res }, event.origin)
+      break
+    }
     default:
       console.error(`[error] Unknown action for get data from page "${event.data.action}". Skip processing`)
       window.postMessage({name: 'iondvPage', action: event.data.action, data: null, message: `Unknown action: ${event.data.action}`}, event.origin)
