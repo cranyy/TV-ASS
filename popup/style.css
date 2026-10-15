@@ -181,6 +181,27 @@ body {
     width: 8em;
 }
 
+.wfa-box {
+    margin-left: 21px;
+    display: grid;
+    gap: 8px;
+}
+
+.wfa-box[hidden] {
+    display: none;
+}
+
+.wfa-box > div {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: center;
+    gap: 6px 18px;
+}
+
+.wfa-box input[type=number] {
+    width: 4em;
+}
+
 #listOfTF {
     max-width: 100%;
 }

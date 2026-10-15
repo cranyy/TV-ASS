@@ -148,20 +148,29 @@ function Process-StrategyCsv {
         }
 
 
-        # Parse the passthrough suffix into TF / Range / final / leftover tokens
+        # Parse the passthrough suffix into TF / Range / walk-forward / final / leftover tokens
         $tfValue = $null
         $rangeRaw = $null
+        $walkForward = $null
         $isFinal = $false
         $optDir = $null
         $optName = $null
         $extraTokens = @()
         if ($fileSuffix) {
-            foreach ($tok in ($fileSuffix -split '_')) {
-                if ([string]::IsNullOrWhiteSpace($tok)) { continue }
+            $tokens = @($fileSuffix -split '_' | Where-Object { -not [string]::IsNullOrWhiteSpace($_) })
+            for ($i = 0; $i -lt $tokens.Count; $i++) {
+                $tok = $tokens[$i]
                 if ($tok -match '^TF(.+)$')         { $tfValue = $Matches[1] }
                 elseif ($tok -match '^RANGE(.+)$')  { $rangeRaw = $Matches[1] }
                 elseif ($tok -ieq 'final')          { $isFinal = $true }
                 elseif ($tok -match '^(max|min)value-(.+)$') { $optDir = $Matches[1]; $optName = $Matches[2] }
+                elseif ($tok -ieq 'training')       { $walkForward = 'Training' }
+                elseif ($tok -ieq 'validation') {
+                    $walkForward = 'New dates'
+                    $next = if ($i + 1 -lt $tokens.Count) { $tokens[$i + 1] } else { '' }
+                    if ($next -match '^\d+$')    { $walkForward += " #$next"; $i++ }
+                    elseif ($next -ieq 'start') { $walkForward += ', start'; $i++ }
+                }
                 else                                { $extraTokens += $tok }
             }
         }
@@ -194,6 +203,7 @@ function Process-StrategyCsv {
         $namePieces += ("{0}-[{1:N2}% Net, {2:0.##}% WR, {3:N2}% DD]" -f $ticker, $netPercent, $winRatePercent, $drawdownPercent)
         if ($tfValue)     { $namePieces += ("TF-[{0}]" -f $tfValue) }
         if ($rangePretty) { $namePieces += ("Range-[{0}]" -f $rangePretty) }
+        if ($walkForward) { $namePieces += ("Walk-forward-[{0}]" -f $walkForward) }
         foreach ($x in $extraTokens) { $namePieces += $x }
         $namePieces += ("Created-[{0}]" -f $createdInner)
         if ($optName) {

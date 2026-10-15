@@ -446,6 +446,29 @@
                                     </div>
                                 </div>
                             </div>
+                            <div>
+                                <div class="param-container">
+                                    <label class="checkbox" title="Filters and the GA minimum count trades on the training part only.">
+                                        <input id="wfaEnabled" type="checkbox">
+                                        <b></b>
+                                        <span><b>Walk-forward check</b></span>
+                                    </label>
+                                    <div id="wfaBox" class="wfa-box" hidden>
+                                        <div class="disabled">Test the winner on the last part of the dates, which the optimizer never sees.</div>
+                                        <div>
+                                            <label for="wfaTrainPercent">Training</label>
+                                            <input id="wfaTrainPercent" type="number" min="1" max="99" step="1" value="80">%
+                                            <span>Validation <b id="wfaValPercent">20</b>%</span>
+                                        </div>
+                                        <div>
+                                            <label for="wfaTop">Check top</label>
+                                            <input id="wfaTop" type="number" min="1" max="20" step="1" value="5"> results
+                                            <input id="wfaIncludeStart" type="checkbox" checked>
+                                            <label for="wfaIncludeStart">Include my starting settings</label>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
                         </details>
                     </div>
                 </div>

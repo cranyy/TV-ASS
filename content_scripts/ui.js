@@ -165,13 +165,53 @@ ui.stylePopup = `<style>
     vertical-align: middle;
     padding: 20px 20px 20px 10px;
   }
-  .iondvpopup-body > p {
+  .iondvpopup-text {
       line-height: 1.35;
       margin-top: 6px;
       /* render the newline section separators that file._applyParamsOnly emits (applied / fallback / failed-missing) as real line breaks; wrap long parameter-name lists inside the 500px popup. CSS-only, plain text — no HTML around untrusted parameter names. */
       white-space: pre-line;
       word-break: break-word;
     }
+  .iondvpopup-table {
+    display: inline-table;
+    width: 100%;
+    margin: 8px 0 4px;
+    border-collapse: collapse;
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+  .iondvpopup-table th,
+  .iondvpopup-table td {
+    padding: 1px 6px;
+    text-align: right;
+    white-space: nowrap;
+  }
+  .iondvpopup-table th:first-child,
+  .iondvpopup-table td:first-child {
+    padding-left: 0;
+    text-align: left;
+  }
+  .iondvpopup-table th {
+    font-size: 12px;
+    font-weight: normal;
+    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
+  }
+  .iondvpopup-table .iondvpopup-wrap {
+    white-space: normal;
+  }
+  .iondvpopup-table .iondvpopup-sub {
+    font-size: 12px;
+    text-align: left;
+  }
+  .iondvpopup-strong td {
+    font-weight: bold;
+  }
+  .iondvpopup-sep td {
+    border-top: 1px solid rgba(0, 0, 0, 0.2);
+  }
+  .iondvpopup-neg {
+    color: #9c0019;
+  }
   .iondvpopup-button {
     position: relative;
     margin: 15px 5px -10px;
@@ -235,6 +275,7 @@ ui.alertPopup =  async (msgText, isError = null, isConfirm = false) => {
     const headerText = isError === null ? 'Information' : isError ? 'Error' : 'Warning'
     const bgColorClass = isError === null ? 'iondvpopup-green' : isError ? 'iondvpopup-red' : 'iondvpopup-orange'
     const headerBgColor = isError === null ? '#80ffad' : isError ? '#ff9286' : '#fdc987'
+    // a div, not a p: the browser moves a table out of a p
     mObj.innerHTML = ui.stylePopup.replaceAll('{bgColorClass}', bgColorClass) + `
 <div class="iondvpopup ${bgColorClass}">
     <div class="iondvpopup-header">${headerText}</div>
@@ -243,7 +284,7 @@ ui.alertPopup =  async (msgText, isError = null, isConfirm = false) => {
         ${icon}
       </div>
       <div class="iondvpopup-body">
-        <p>${msgText}</p>
+        <div class="iondvpopup-text">${msgText}</div>
         <button class="iondvpopup-button" id="iondvPopupCloseBtn">OK</button>
         ${isConfirm ? '<button class="iondvpopup-button" id="iondvPopupCancelBtn">Cancel</button>' : ''}
       </div>
@@ -323,10 +364,10 @@ ui.styleValStausMessage = `
 
 
 ui.styleValStatusMessage = `background-color: #fffde0; color: black;
-      width: 800px; height: 260px; position: fixed;       top: 50px;     right: 0;    left: 0;
+      width: 800px; min-height: 260px; position: fixed;       top: 50px;     right: 0;    left: 0;
       margin: auto;       border: 1px solid lightblue;       box-shadow: 3px 3px 7px #777;
       align-items: center;       justify-content: left;       text-align: left;`
-// running status box is a plain fixed height (260px) so the apply line + the cycle stats both fit without spilling
+// running status box is at least 260px tall and grows with its text
 
 
 ui.statusMessage = (msgText, extraHeader = null) => {

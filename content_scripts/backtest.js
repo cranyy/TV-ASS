@@ -115,6 +115,7 @@ function prepareFullBestPropVal(testResults, candidate = {}, strategyData = null
 
 backtest._prepareFullBestPropVal = (testResults, candidate = {}, strategyData = null) => prepareFullBestPropVal(testResults, candidate, strategyData)
 backtest._clonePropValues = clonePropValues
+backtest._fullPropVal = (testResults, inputs) => expandPropVal(inputs, testResults.fullBaseline)
 
 async function _batchedPersistTestResults(testResults, force = false) {
   // flush dirty test results to chrome storage instead of recursively calling the batching helper
@@ -169,7 +170,8 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     // Ensure all necessary data is present before proceeding.
     if (!res || !res.data || !res.bestPropVal) return;
 
-    const filterFailure = _getFilterFailure(testResults, res.data)
+    const ignoreFilters = options && options.ignoreFilters === true
+    const filterFailure = ignoreFilters ? null : _getFilterFailure(testResults, res.data)
     if (filterFailure) {
       console.log('AutoSave skipped by filter:', filterFailure)
       return
@@ -200,7 +202,7 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     } catch (err) {
       console.warn('Failed to capture filter diagnostics', err)
     }
-    if (!diag || !Array.isArray(diag) || diag.some(item => item.passes !== true)) {
+    if (!ignoreFilters && (!diag || !Array.isArray(diag) || diag.some(item => item.passes !== true))) {
       console.warn('AutoSave blocked: filter diagnostics not satisfied', diag)
       return
     }
@@ -315,8 +317,9 @@ backtest._autosaveOnBest = (testResults, res, options = {}) => {
     }
     const optToken = backtest._optTargetFilenameToken(testResults && testResults.optParamName, testResults && testResults.isMaximizing, optValueStr);
     if (optToken) filenameBase += `_${optToken}`;
-    if (safeSuffix)
-      filenameBase += `_${safeSuffix}`;
+    const tail = [testResults && testResults.wfaWindow, safeSuffix].filter(Boolean).join('_');
+    if (tail)
+      filenameBase += `_${tail}`;
 
     // Construct the correct filename with the .csv extension.
     const filename = sanitizeFilename(`${filenameBase}.csv`);

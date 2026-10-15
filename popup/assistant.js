@@ -29,7 +29,7 @@ function cloneFilterParamOptions() {
 function setOptionsEvents() {
   for(let elId of ['optMinmax', 'optParamName', 'optMethod', 'optFilterOff', 'optFilterMore', 'optFilterLess', 'optFilter2Off', 'optFilter2More', 'optFilter2Less',
     'optFilterValue', 'optFilterParamName', 'optFilterValue2', 'optFilterParamName2', 'randomDelay', 'shouldTestTF', 'autoBestDownload', 'shouldSkipInitBestResult',
-    'shouldSkipWaitingForDownload', 'gaMinTradesTotal']) {
+    'shouldSkipWaitingForDownload', 'gaMinTradesTotal', 'wfaEnabled', 'wfaTrainPercent', 'wfaTop', 'wfaIncludeStart']) {
     const el = document.getElementById(elId)
     if (!el) {
       console.error(`Can not find id ${elId}`)
@@ -39,11 +39,13 @@ function setOptionsEvents() {
       saveOptions(elId)
     }
     el.addEventListener('click', saveOptListener)
-    if (['optFilterParamName', 'optFilterParamName2', 'optFilterValue', 'optFilterValue2', 'optParamName', 'optMethod', 'gaMinTradesTotal'].includes(elId))
+    if (['optFilterParamName', 'optFilterParamName2', 'optFilterValue', 'optFilterValue2', 'optParamName', 'optMethod', 'gaMinTradesTotal', 'wfaTrainPercent', 'wfaTop'].includes(elId))
       el.addEventListener('change', saveOptListener)
-    if (['optFilterValue', 'optFilterValue2', 'gaMinTradesTotal'].includes(elId))
+    if (['optFilterValue', 'optFilterValue2', 'gaMinTradesTotal', 'wfaTrainPercent', 'wfaTop'].includes(elId))
       el.addEventListener('input', saveOptListener)
   }
+  for(let elId of ['wfaEnabled', 'wfaTrainPercent'])
+    document.getElementById(elId).addEventListener('input', updateWfaBox)
   for(let elId of ['deepStartDate', 'backtestDelay', 'dataLoadingTime', 'listOfTF']) {
     const el = document.getElementById(elId)
     if (!el)
@@ -179,7 +181,16 @@ function setPopupInputsByOptions(getResults) {
         if (iondvOptions.listOfTF !== null)
           document.getElementById('listOfTF').value = iondvOptions.listOfTF
       }
+      if (iondvOptions.hasOwnProperty('wfaEnabled'))
+        document.getElementById('wfaEnabled').checked = Boolean(iondvOptions.wfaEnabled)
+      if (iondvOptions.hasOwnProperty('wfaTrainPercent'))
+        document.getElementById('wfaTrainPercent').value = iondvOptions.wfaTrainPercent
+      if (iondvOptions.hasOwnProperty('wfaTop'))
+        document.getElementById('wfaTop').value = iondvOptions.wfaTop
+      if (iondvOptions.hasOwnProperty('wfaIncludeStart'))
+        document.getElementById('wfaIncludeStart').checked = Boolean(iondvOptions.wfaIncludeStart)
     }
+    updateWfaBox()
     const link = document.querySelector(`div.tabs__links > a${typeof tabId === 'number' && tabId > 0 && tabId < 3 ? ':nth-child(' + tabId + ')' : ''}`);
     if (link) // Activate saved or fist tab
       link.click();
@@ -239,9 +250,23 @@ function getOptions(signal) {
     const listOfTF =  document.getElementById('listOfTF').value
     iondvOptions.listOfTF = listOfTF === '' ? null : listOfTF
   }
+  iondvOptions.wfaEnabled = document.getElementById('wfaEnabled').checked
+  iondvOptions.wfaTrainPercent = wholeNumberIn('wfaTrainPercent', 1, 99, 80)
+  iondvOptions.wfaTop = wholeNumberIn('wfaTop', 1, 20, 5)
+  iondvOptions.wfaIncludeStart = document.getElementById('wfaIncludeStart').checked
 
   iondvOptions.tabId = (signal === 'uploadSignals') ? 3 : 1
   return iondvOptions
+}
+
+function wholeNumberIn(elId, min, max, fallback) {
+  const num = parseInt(document.getElementById(elId).value, 10)
+  return Number.isFinite(num) ? Math.min(max, Math.max(min, num)) : fallback
+}
+
+function updateWfaBox() {
+  document.getElementById('wfaBox').hidden = !document.getElementById('wfaEnabled').checked
+  document.getElementById('wfaValPercent').innerText = String(100 - wholeNumberIn('wfaTrainPercent', 1, 99, 80))
 }
 
 function saveOptions(signal) {

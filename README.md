@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.134
+- New option **Walk-forward check** (off by default): the optimizer picks its winner on the first part of your testing period only, then tests the top results on the remaining dates it never saw, and a popup at the end compares the two. Time and time again my strategies would "perform magically" then instantly start to produce pathetic results in actual settings. So now I added WFA so that we can see if it actually performs well for data it hasnt seen. 
+
 ### 1.133
 - Fixed CSV Import not setting the testing period when its end date differed from the chart's current one; the end date is now set too.
 

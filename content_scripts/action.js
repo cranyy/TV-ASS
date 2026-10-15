@@ -76,7 +76,8 @@ action._extractOptimizerFields = (src) => {
     autoBestDownload: src.hasOwnProperty('autoBestDownload') ? src.autoBestDownload : null,
     gaTradesGateEnabled: src.hasOwnProperty('gaTradesGateEnabled') ? src.gaTradesGateEnabled : null,
     targetTradesPerDay: src.targetTradesPerDay || null,
-    minTradesTotal: src.minTradesTotal || null
+    minTradesTotal: src.minTradesTotal || null,
+    wfa: src.wfa || null
   }
 }
 
@@ -943,7 +944,7 @@ action.downloadStrategyTestResults = async () => {
     if (bestResult && bestResult.hasOwnProperty(testResults.optParamName))
       await ui.showPopup(`The best found parameters are set for the strategy\n\nThe best ${testResults.isMaximizing ? '(max) ' : '(min)'} ${testResults.optParamName}: ` + bestResult[testResults.optParamName])
   }
-  file.saveAs(CSVResults, `${testResults.ticker}:${testResults.timeFrame} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}.csv`)
+  file.saveAs(CSVResults, `${testResults.ticker}:${testResults.timeFrame} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}${testResults.wfaWindow ? `_${testResults.wfaWindow}` : ''}.csv`)
 }
 
 
@@ -957,9 +958,12 @@ action.testStrategy = async (request, isDeepTest = false) => {
     if (allRangeParams !== null) { // click cancel on parameters
       const testParams = await action._getTestParams(request, strategyData, allRangeParams, paramRange, cycles, isDeepTest)
       console.log('Test parameters', testParams)
-      action._showStartMsg(testParams.paramSpace, testParams.cycles, testParams.backtestDelay ? ` with delay between tests ${testParams.backtestDelay} sec` : '')
+      const addInfo = testParams.backtestDelay ? ` with delay between tests ${testParams.backtestDelay} sec` : ''
+      action._showStartMsg(testParams.paramSpace, testParams.cycles, addInfo)
       testParams.isDeepTest = isDeepTest
       // await tv.setDeepTest(isDeepTest, testParams.deepStartDate)
+      if (testParams.wfaEnabled && testParams.shouldTestTF)
+        throw new Error('The walk-forward check runs on one timeframe. Untick "Backtesting the strategy on timeframes" or the walk-forward check.')
 
       let testResults = {}
       if (testParams.shouldTestTF) {
@@ -997,6 +1001,8 @@ action.testStrategy = async (request, isDeepTest = false) => {
             await ui.showWarningPopup(`Did not found any result value after testing`)
           }
         }
+      } else if (testParams.wfaEnabled) {
+        await action._wfaRun(testParams, strategyData, allRangeParams, addInfo)
       } else {
         testResults = await backtest.testStrategy(testParams, strategyData, allRangeParams)
         await action._saveTestResults(testResults, testParams)
@@ -1147,6 +1153,14 @@ action._getTestParams = async (request, strategyData, allRangeParams, paramRange
   // keep GA gate opt-in default false when the caller does not provide explicit GA feasibility options
   if (!testParams.hasOwnProperty('gaTradesGateEnabled'))
     testParams.gaTradesGateEnabled = false
+  const wholeNumberIn = (value, min, max, fallback) => {
+    const num = Number(value)
+    return Number.isInteger(num) && num >= min && num <= max ? num : fallback
+  }
+  testParams.wfaEnabled = options.wfaEnabled === true
+  testParams.wfaTrainPercent = wholeNumberIn(options.wfaTrainPercent, 1, 99, 80)
+  testParams.wfaTop = wholeNumberIn(options.wfaTop, 1, 20, 5)
+  testParams.wfaIncludeStart = options.wfaIncludeStart !== false
 
   // assemble the v3 runContext on testParams (== testResults during the run, so it survives to _autosaveOnBest/_saveTestResults). The async chart reads (session, exchange-qualified symbol) happen HERE; backtest._autosaveOnBest only does the sync per-save refresh (date range + optimizer block) so it stays synchronous.
   testParams.runContext = await action._buildRunContextV3(testParams, strategyData)
@@ -1202,11 +1216,14 @@ action._buildRunContextV3 = async (testParams, strategyData) => {
 }
 
 
-action._showStartMsg = (paramSpaceNumber, cycles, addInfo) => {
+action._showStartMsg = (paramSpaceNumber, cycles, addInfo, extraRows = '') => {
   let extraHeader = `The search is performed among ${paramSpaceNumber} possible combinations of parameters (space).`
   extraHeader += (paramSpaceNumber / cycles) > 10 ? `<br />This is too large for ${cycles} cycles. It is recommended to use up to 3-4 essential parameters, remove the rest from the strategy parameters file.` : ''
-  ui.statusMessage(`Started${addInfo}.`, extraHeader)
+  ui.statusMessage(`Started${addInfo}.`, extraHeader + extraRows)
 }
+
+action._resultsCsvName = (testResults) =>
+  `${testResults.ticker}:${testResults.timeFrame}${testResults.isDeepTest ? ' deep backtesting' : ''} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}${testResults.wfaWindow ? `_${testResults.wfaWindow}` : ''}.csv`
 
 action._saveTestResults = async (testResults, testParams, isFinalTest = true) => {
   console.log('testResults', testResults)
@@ -1242,7 +1259,7 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
   // clear #iondvApplyLine at the terminal "All done." status. The final best-parameter apply above (isFinalTest -> tv.setStrategyParams) leaves "✓ Applied …" in the apply line; without this it would sit next to the completed-run message. Guarded; statusMessage(text) above is the replace-path and does not touch the apply line.
   try { if (typeof ui.statusApplyLine === 'function') ui.statusApplyLine('') } catch {}
   console.log(`All done.\n\n${bestResult && bestResult.hasOwnProperty(testParams.optParamName) ? 'The best ' + (testResults.isMaximizing ? '(max) ' : '(min) ') + testParams.optParamName + ': ' + bestResult[testParams.optParamName] : ''}`)
-  file.saveAs(CSVResults, `${testResults.ticker}:${testResults.timeFrame}${testResults.isDeepTest ? ' deep backtesting' : ''} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testParams.optParamName}_${testResults.method}.csv`)
+  file.saveAs(CSVResults, action._resultsCsvName(testResults))
 
   if (propVal && Object.keys(propVal).length && bestResult && typeof bestResult === 'object') {
     const bestResultSnapshot = { ...bestResult }
@@ -1265,6 +1282,421 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
     }
   }
 }
+
+action._wfaRun = async (testParams, strategyData, allRangeParams, addInfo) => {
+  const original = tv._readTestingPeriod()
+  if (!original || !original.label)
+    throw new Error('Walk-forward check: the testing period could not be read. Open the Strategy Tester and run again.')
+  const wfa = { original, periodTouched: false, winnerRow: null, winnerPropVal: null }
+  let runError = null
+  try {
+    await action._wfaStart(testParams, wfa)
+    action._showStartMsg(testParams.paramSpace, testParams.cycles, addInfo, action._wfaDateRows(testParams.wfa))
+    const testResults = await backtest.testStrategy(testParams, strategyData, allRangeParams)
+    await action._saveTestResults(testResults, testParams, false)
+    const best = model.getBestResult(testResults)
+    if (best && typeof best === 'object') {
+      wfa.winnerRow = best
+      wfa.winnerPropVal = backtest._fullPropVal(testResults, action._wfaRowInputs(best))
+    }
+    if (action.workerStatus === null)
+      wfa.stopped = 'cycles'
+    else if (wfa.winnerPropVal)
+      await action._wfaValidate(testResults, wfa)
+  } catch (err) {
+    runError = err
+  }
+  if (wfa.periodTouched || wfa.winnerPropVal)
+    ui.statusMessage(`<p>Putting your testing period${wfa.winnerPropVal ? ' and the winner' : ''} back.</p>`)
+  const problems = await action._wfaRestore(testParams, wfa)
+  if (runError) {
+    if (problems.length)
+      throw new Error(`${runError && runError.message ? runError.message : runError}\n\n${problems.join('\n\n')}`, { cause: runError })
+    throw runError
+  }
+  ui.statusMessageRemove()
+  const text = action._wfaSummary(testParams, wfa, problems)
+  if (problems.length || wfa.validationError)
+    await ui.showWarningPopup(text)
+  else
+    await ui.showPopup(text)
+}
+
+action._wfaStart = async (testParams, wfa) => {
+  const full = testParams.runContext && testParams.runContext.dateRange
+  if (!full || !full.from || !full.to)
+    throw new Error(`Walk-forward check: "${wfa.original.label}" has no fixed dates to split. Choose a custom date range or "Last N days" and run again.`)
+  const split = action._wfaSplit(full.from, full.to, testParams.wfaTrainPercent)
+  wfa.periodTouched = true
+  const set = await action._wfaSetWindow(testParams, split.training)
+  if (!set.ok)
+    throw new Error(set.periodSet
+      ? `Walk-forward check: the report on the training dates (${action._wfaRange(split.training)}) did not update: ${set.message}`
+      : `Walk-forward check: the training dates (${action._wfaRange(split.training)}) could not be set: ${set.message}`)
+  testParams.wfaWindow = 'training'
+  testParams.wfa = { trainPercent: testParams.wfaTrainPercent, full: { from: full.from, to: full.to }, ...split }
+}
+
+action._wfaSplit = (from, to, percent) => {
+  const DAY = 86400000
+  const start = Date.parse(`${from}T00:00:00Z`)
+  const total = Math.round((Date.parse(`${to}T00:00:00Z`) - start) / DAY) + 1
+  const trainDays = Math.round(total * percent / 100)
+  const date = (offset) => new Date(start + offset * DAY)
+  const part = (offset, days) => ({ from: date(offset).toISOString().slice(0, 10), to: date(offset + days - 1).toISOString().slice(0, 10), days })
+  const split = { training: part(0, trainDays), validation: part(trainDays, total - trainDays) }
+  for (const [name, offset] of [['training', 0], ['validation', trainDays]]) {
+    const days = split[name].days
+    let weekdays = 0
+    for (let i = 0; i < days; i++)
+      weekdays += [0, 6].includes(date(offset + i).getUTCDay()) ? 0 : 1
+    if (weekdays < 3)
+      throw new Error(`Walk-forward check: the ${name} part ${days > 0 ? `(${action._wfaRange(split[name])}) ` : ''}has ${weekdays} weekday${weekdays === 1 ? '' : 's'}. Each part needs at least 3. Use a longer testing period or change the split.`)
+  }
+  return split
+}
+
+// only a report that differs from the one on screen belongs to the new dates
+action._wfaSetWindow = async (testResults, win) => {
+  const shown = tv._reportSignature()
+  if (shown)
+    tv._lastReportSignature = shown
+  const set = await tv.setTestingPeriod(win.from, win.to)
+  if (!set.ok)
+    return { ok: false, periodSet: false, message: set.message }
+  const res = await tv.getPerformance(testResults, false, true)
+  return { ok: res.error === null, periodSet: true, error: res.error, message: res.message }
+}
+
+action._wfaValidate = async (testResults, wfa) => {
+  const checks = await action._wfaCandidates(testResults, wfa)
+  wfa.checks = checks
+  testResults.wfaWindow = 'validation'
+  ui.statusMessage(`<p>Validation ${action._wfaRange(testResults.wfa.validation)}: setting the dates.</p>`)
+  await backtest.delay(testResults.backtestDelay, testResults.randomDelay)
+  if (!(await tv.setStrategyParams(testResults.shortName, action._wfaOptimizedInputs(testResults, wfa.winnerPropVal)))) {
+    wfa.validationError = 'the best inputs could not be applied to the chart'
+    return
+  }
+  testResults.lastAppliedParams = backtest._clonePropValues(wfa.winnerPropVal)
+  const refresh = await action._wfaSetWindow(testResults, testResults.wfa.validation)
+  if (!refresh.periodSet) {
+    wfa.validationError = refresh.message
+    return
+  }
+  for (const check of checks) {
+    if (action.workerStatus === null) {
+      wfa.stopped = 'validation'
+      break
+    }
+    ui.statusMessage(action._wfaProgress(testResults, wfa))
+    await backtest.delay(testResults.backtestDelay, testResults.randomDelay)
+    // reading again after a failed refresh would return the previous dates' report
+    const res = check.kind === 'winner' && !refresh.ok
+      ? { error: refresh.error, message: refresh.message, data: {} }
+      : await backtest.getTestIterationResult(testResults, check.propVal)
+    const empty = !!res.empty
+    // a no-trades report can still show the previous report's numbers
+    const row = empty ? {} : { ...res.data }
+    Object.keys(check.propVal).forEach(key => { row[`__${key}`] = check.propVal[key] })
+    const detail = empty ? 'No trades: the strategy report requires trade data for these parameter values.' : row.comment || res.message || ''
+    row.comment = `${action._wfaRowComment(testResults, check)}${detail ? ` ${detail}` : ''}`
+    Object.assign(check, { row, error: res.error !== null, empty, message: detail })
+  }
+  const rows = checks.filter(check => check.row).map(check => check.row)
+  if (!rows.length)
+    return
+  file.saveAs(file.convertResultsToCSV({ ...testResults, perfomanceSummary: rows, filteredSummary: [] }), action._resultsCsvName(testResults))
+  action._wfaTableChecks(checks)
+    .filter(check => check.row && !check.error && !check.empty)
+    .forEach(check => {
+      const suffix = check.kind === 'winner' ? 'final' : check.kind === 'start' ? 'start' : String(check.rank)
+      backtest._autosaveOnBest(testResults, { data: { ...check.row }, bestPropVal: check.propVal }, { force: true, suffix, ignoreFilters: true })
+    })
+}
+
+action._wfaCandidates = async (testResults, wfa) => {
+  const target = testResults.optParamName
+  const sign = testResults.isMaximizing === false ? 1 : -1
+  const checks = [{ kind: 'winner', rank: 1, propVal: wfa.winnerPropVal, trainingRow: wfa.winnerRow }]
+  const { fullSummary } = await model.buildExportSummaries(testResults)
+  // the first row is the starting report ("Current parameters"), which never went through the filters
+  const baseline = typeof testResults.initBaselineValue === 'number' ? fullSummary[0] : null
+  const passing = baseline ? fullSummary.slice(1) : fullSummary
+  const ranked = passing.filter(row => typeof row[target] === 'number').sort((a, b) => sign * (a[target] - b[target]))
+  for (const row of ranked) {
+    if (checks.length >= testResults.wfaTop)
+      break
+    const propVal = backtest._fullPropVal(testResults, action._wfaRowInputs(row))
+    if (!checks.some(check => action._wfaSameInputs(check.propVal, propVal) || action._wfaSameReport(check.trainingRow, row)))
+      checks.push({ kind: 'runner', rank: checks.length + 1, propVal, trainingRow: row })
+  }
+  wfa.trainingChecked = checks.length
+  const startPropVal = backtest._fullPropVal(testResults, testResults.startParams.current)
+  wfa.startIsWinner = action._wfaSameInputs(wfa.winnerPropVal, startPropVal)
+  if (testResults.wfaIncludeStart && !wfa.startIsWinner) {
+    const listed = checks.find(check => action._wfaSameInputs(check.propVal, startPropVal) || action._wfaSameReport(check.trainingRow, baseline))
+    if (listed)
+      listed.isStart = true
+    else
+      checks.push({ kind: 'start', isStart: true, propVal: startPropVal, trainingRow: baseline })
+  }
+  return checks
+}
+
+action._wfaRestore = async (testResults, wfa) => {
+  const problems = []
+  const original = wfa.original
+  if (wfa.periodTouched) {
+    let message = ''
+    try {
+      const set = original.from && original.to
+        ? await tv.setTestingPeriod(original.from, original.to, original.label)
+        : await tv.setTestingPeriod(null, null, original.label)
+      wfa.periodRestored = !!(set && set.ok)
+      message = set && set.message
+    } catch (err) {
+      message = err && err.message ? err.message : String(err)
+    }
+    if (!wfa.periodRestored)
+      problems.push(`Your testing period could not be put back to "${original.label}": ${action._wfaClause(message)}. Set it by hand.`)
+  }
+  if (wfa.winnerPropVal) {
+    try {
+      wfa.winnerApplied = await tv.setStrategyParams(testResults.shortName, action._wfaOptimizedInputs(testResults, wfa.winnerPropVal))
+      if (wfa.winnerApplied)
+        await tv.generateDeepTestReport()
+    } catch (err) {
+      console.warn('[TV-ASS] walk-forward check: applying the best inputs failed', err)
+    }
+    if (!wfa.winnerApplied)
+      problems.push('The best inputs could not be applied again; load the _training_final file with CSV Import.')
+  }
+  return problems
+}
+
+action._wfaSummary = (testResults, wfa, problems) => {
+  const split = testResults.wfa
+  const target = testResults.optParamName
+  const net = action._wfaNet
+  const signed = action._wfaSigned
+  const describe = (part, row) => {
+    const value = net(row)
+    const trades = row && typeof row['Total trades: All'] === 'number' ? `, ${row['Total trades: All']} trades` : ''
+    if (value === null)
+      return `${action._wfaRange(part)} (${part.days} days): net profit is not in the report${trades}`
+    const month = value / part.days * 30
+    return `${action._wfaRange(part)} (${part.days} days): ${signed(value)} % net profit${trades}, about ${month < 0 ? '−' : ''}${Math.abs(month).toFixed(1)} % a month`
+  }
+  const lines = []
+  const finish = () => {
+    const restored = [wfa.periodRestored && `your dates are back to "${wfa.original.label}"`, wfa.winnerApplied && 'the winner is applied'].filter(Boolean).join(' and ')
+    if (restored)
+      lines.push(`${restored[0].toUpperCase()}${restored.slice(1)}.`)
+    if (problems.length)
+      lines.push('', ...problems)
+    return lines.join('\n')
+  }
+  if (wfa.stopped === 'cycles') {
+    lines.push('Stopped before the walk-forward check.')
+    return finish()
+  }
+  if (!wfa.winnerPropVal) {
+    lines.push('Walk-forward check skipped: no result passed your filters on the training dates, so there was nothing to test on the new dates.')
+    return finish()
+  }
+  if (wfa.validationError) {
+    lines.push(`The validation step did not run: ${action._wfaClause(wfa.validationError)}. The training results are saved.`)
+    return finish()
+  }
+
+  const checks = wfa.checks
+  const winner = checks[0]
+  const winnerRead = !!(winner.row && !winner.error)
+  lines.push('<b>Walk-forward check done</b>', '')
+  if (wfa.startIsWinner)
+    lines.push('Nothing beat your starting settings on the training dates, so the winner is your starting settings.', '')
+  if (wfa.trainingChecked < testResults.wfaTop) {
+    const n = wfa.trainingChecked
+    lines.push(`Only ${n} different result${n === 1 ? '' : 's'} passed your filters on the training dates, so ${n} ${n === 1 ? 'was' : 'were'} checked.`, '')
+  }
+  lines.push('On the dates it was picked on', describe(split.training, wfa.winnerRow), '')
+  lines.push('On new dates it never saw')
+  if (!winner.row)
+    lines.push(`${action._wfaRange(split.validation)} (${split.validation.days} days): not checked.`)
+  else if (winner.error)
+    lines.push(`${action._wfaRange(split.validation)} (${split.validation.days} days): could not be tested (${action._wfaClause(winner.message)}).`)
+  else if (winner.empty)
+    lines.push(`${action._wfaRange(split.validation)}: no trades in those ${split.validation.days} days.`)
+  else
+    lines.push(describe(split.validation, winner.row))
+  if (winnerRead && !winner.empty && target !== 'Net profit %: All') {
+    const value = (v) => typeof v === 'number' ? backtest.convertValue(v) : 'n/a'
+    lines.push(`${target}: ${value(wfa.winnerRow[target])} on the training dates, ${value(winner.row[target])} on the new dates.`)
+  }
+
+  const validationNet = winnerRead && !winner.empty ? net(winner.row) : null
+  const trainingNet = net(wfa.winnerRow)
+  let verdict = null
+  if (winnerRead && winner.empty)
+    verdict = 'It made no trades on the new dates.'
+  else if (validationNet !== null && validationNet <= 0)
+    verdict = 'It lost money on the new dates.'
+  else if (validationNet !== null && (trainingNet === null || trainingNet <= 0))
+    verdict = 'It made money on the new dates.'
+  else if (validationNet !== null) {
+    const pace = action._wfaPace(split, trainingNet, validationNet)
+    verdict = pace >= 1
+      ? 'It made money on the new dates, at least as fast as on the training dates.'
+      : `It made money on the new dates, at about ${Math.round(pace * 100)} % of its training pace.`
+  }
+  if (verdict)
+    lines.push('', `<b>${verdict}</b>`)
+  lines.push(action._wfaTable(testResults, wfa))
+
+  const runners = checks.filter(check => check.kind === 'runner')
+  const runnersRead = runners.filter(check => check.row)
+  if (testResults.wfaTop > 1 && runnersRead.length) {
+    const ran = runnersRead.filter(check => !check.error)
+    const failed = runnersRead.length - ran.length
+    const won = ran.filter(check => !check.empty && net(check.row) > 0).length
+    const failedText = failed ? ` (${failed} could not be tested)` : ''
+    if (!ran.length)
+      lines.push(`Next ${runners.length} best: none could be tested.`)
+    else if (won === ran.length)
+      lines.push(`Next ${runners.length} best: ${ran.length === 1 ? 'it' : `all ${ran.length} that ran`} ${validationNet > 0 ? 'also ' : ''}made money on the new dates${failedText}.`)
+    else
+      lines.push(`Next ${runners.length} best: ${won} of ${ran.length} that ran made money on the new dates${failedText}.`)
+  }
+  if (wfa.stopped === 'validation')
+    lines.push(`Stopped: ${checks.filter(check => check.row).length} of ${checks.length} were checked.`)
+  return finish()
+}
+
+action._wfaTableChecks = (checks) => {
+  const shown = checks.filter(check => check.rank <= 5)
+  const start = checks.find(check => check.isStart)
+  return start && !shown.includes(start) ? [...shown, start] : shown
+}
+
+action._wfaTable = (testResults, wfa) => {
+  const split = testResults.wfa
+  const target = testResults.optParamName
+  const netKey = 'Net profit %: All'
+  const withTarget = target !== netKey
+  const shown = action._wfaTableChecks(wfa.checks)
+  if (shown.length < 2)
+    return ''
+  const percent = (value) => value === null ? 'n/a' : `${action._wfaSigned(value)} %`
+  const value = (v) => typeof v === 'number' ? backtest.convertValue(v) : 'n/a'
+  const cell = (text, cls) => `<td${cls ? ` class="${cls}"` : ''}>${text}</td>`
+  const row = (check) => {
+    const name = check.kind === 'start' ? 'Start' : `${check.kind === 'winner' ? 'Winner' : `#${check.rank}`}${check.isStart ? ' (start)' : ''}`
+    const trainingNet = action._wfaNet(check.trainingRow)
+    const read = !!(check.row && !check.error && !check.empty)
+    const newNet = read ? action._wfaNet(check.row) : null
+    const status = !check.row ? 'not checked' : check.error ? 'not tested' : 'no trades'
+    const trades = check.empty ? 0 : read && typeof check.row['Total trades: All'] === 'number' ? check.row['Total trades: All'] : ''
+    let pace = ''
+    if (newNet !== null)
+      pace = newNet <= 0 ? 'lost' : trainingNet > 0 ? `${Math.round(action._wfaPace(split, trainingNet, newNet) * 100)} %` : 'n/a'
+    const cells = [cell(name)]
+    if (withTarget)
+      cells.push(cell(value(check.trainingRow ? check.trainingRow[target] : null)), cell(read ? value(check.row[target]) : status))
+    cells.push(cell(percent(trainingNet)), cell(read ? percent(newNet) : withTarget ? '' : status, newNet < 0 ? 'iondvpopup-neg' : ''))
+    cells.push(cell(trades), cell(pace, pace === 'lost' ? 'iondvpopup-neg' : ''))
+    const cls = check.kind === 'winner' ? 'iondvpopup-strong' : !(check.rank <= 5) ? 'iondvpopup-sep' : ''
+    return `<tr${cls ? ` class="${cls}"` : ''}>${cells.join('')}</tr>`
+  }
+  const group = (text) => `<th colspan="2" class="iondvpopup-wrap">${text}</th>`
+  const head = `<tr><th></th>${withTarget ? group(`${target} (optimized)`) : ''}${group(withTarget ? netKey : `${netKey} (optimized)`)}${group('On the new dates')}</tr>` +
+    `<tr><th></th>${'<th>Training</th><th>New dates</th>'.repeat(withTarget ? 2 : 1)}<th>Trades</th><th>Pace</th></tr>`
+  const body = shown.filter(check => check.rank <= 5).map(row)
+  const hidden = wfa.checks.filter(check => check.rank > 5 && check.row && !shown.includes(check))
+  if (hidden.length) {
+    const [first, last] = [hidden[0].rank, hidden[hidden.length - 1].rank]
+    const text = hidden.length === 1 ? `#${first} was checked too; it is` : `#${first} – #${last} were checked too; they are`
+    body.push(`<tr><td class="iondvpopup-sub" colspan="${withTarget ? 7 : 5}">${text} in the _validation file.</td></tr>`)
+  }
+  body.push(...shown.filter(check => !(check.rank <= 5)).map(row))
+  return `<table class="iondvpopup-table"><thead>${head}</thead><tbody>${body.join('')}</tbody></table>`
+}
+
+action._wfaProgress = (testResults, wfa) => {
+  const checks = wfa.checks
+  const done = checks.filter(check => check.row)
+  const value = (check) => {
+    if (check.error)
+      return 'error'
+    if (check.empty)
+      return 'no trades'
+    const v = check.row[testResults.optParamName]
+    return typeof v === 'number' ? v.toFixed(2) : 'n/a'
+  }
+  let text = `<p>Validation ${action._wfaRange(testResults.wfa.validation)}: checking ${Math.min(done.length + 1, checks.length)} of ${checks.length}. Settings are not changed.</p>`
+  if (done.length)
+    text += `<p>${done.map(check => `${action._wfaCheckLabel(check)} ${value(check)}`).join(' · ')}</p>`
+  done.filter(check => check.error).forEach(check => {
+    text += `<p style="color: red">${action._wfaCheckLabel(check)}: ${check.message}</p>`
+  })
+  return text
+}
+
+action._wfaRowComment = (testResults, check) => {
+  const name = check.kind === 'winner' ? 'Best' : check.kind === 'runner' ? `Training #${check.rank}` : 'Starting inputs'
+  const value = check.trainingRow ? check.trainingRow[testResults.optParamName] : null
+  const training = typeof value === 'number' ? `training ${testResults.optParamName} ${backtest.convertValue(value)}` : 'no training value'
+  return `Validation ${action._wfaRange(testResults.wfa.validation)}, not used to choose. ${name}: ${training}.`
+}
+
+action._wfaCheckLabel = (check) => check.kind === 'winner' ? 'Winner' : check.kind === 'runner' ? `#${check.rank}` : 'Start'
+
+action._wfaDateRows = (split) => {
+  const row = (name, part) => `<tr><td style="padding-right: 14px">${name}</td><td style="padding-right: 14px">${action._wfaRange(part)}</td><td>${part.days} days</td></tr>`
+  return `<table style="font-size: 12px; border-collapse: collapse; margin-top: 3px">${row('Training dates', split.training)}${row('Validation dates', split.validation)}</table>`
+}
+
+action._wfaMonths = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec']
+
+action._wfaDay = (iso) => {
+  const [year, month, day] = iso.split('-').map(Number)
+  return `${action._wfaMonths[month - 1]} ${day}${year === new Date().getFullYear() ? '' : ` ${year}`}`
+}
+
+action._wfaRange = (part) => `${action._wfaDay(part.from)} – ${action._wfaDay(part.to)}`
+
+action._wfaRowInputs = (row) => {
+  const inputs = {}
+  Object.keys(row).forEach(key => {
+    if (key.startsWith('__'))
+      inputs[key.slice(2)] = row[key]
+  })
+  return inputs
+}
+
+action._wfaOptimizedInputs = (testResults, propVal) => {
+  const inputs = {}
+  testResults.paramsNames.forEach(name => { inputs[name] = propVal[name] })
+  return inputs
+}
+
+action._wfaSameInputs = (a, b) => Object.keys(a).every(key => tv._valuesLooseEqual(a[key], b[key]))
+
+// inputs that change nothing give one result under several input sets; the _ fields are timings, not the report
+action._wfaSameReport = (a, b) => {
+  if (!a || !b)
+    return false
+  const keys = [...new Set([...Object.keys(a), ...Object.keys(b)])].filter(key => !key.startsWith('_') && key !== 'comment')
+  return keys.length > 0 && keys.every(key => a[key] === b[key])
+}
+
+action._wfaNet = (row) => row && typeof row['Net profit %: All'] === 'number' ? row['Net profit %: All'] : null
+
+action._wfaSigned = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}`
+
+action._wfaPace = (split, trainingNet, validationNet) => (validationNet / split.validation.days) / (trainingNet / split.training.days)
+
+action._wfaClause = (text) => String(text || 'no reason given').trim().replace(/\.+$/, '')
 
 
 action.show3DChart = async () => {
