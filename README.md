@@ -6,6 +6,10 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.135
+- Fixed the walk-forward check failing at the very end of a long run with "TradingView keeps Select disabled". TradingView only accepts testing periods up to the day its page was loaded, so a tab opened yesterday refused a period ending today. The extension now sets such a period anyway (TradingView itself accepts it once it is submitted), and it checks the validation dates before the run starts, so a date problem stops the run in seconds instead of after hours. CSV Import gets the same fix.
+- New walk-forward report at the end of a run: a clear verdict, a timeline of the training and new dates, the winner's net profit, profit per month, trades, win rate, profit factor and drawdown on both parts side by side, and how the next best results and your starting settings did on the new dates. Results identical to the winner's are folded together. It follows TradingView's light and dark themes.
+
 ### 1.134
 - New option **Walk-forward check** (off by default): the optimizer picks its winner on the first part of your testing period only, then tests the top results on the remaining dates it never saw, and a popup at the end compares the two. Time and time again my strategies would "perform magically" then instantly start to produce pathetic results in actual settings. So now I added WFA so that we can see if it actually performs well for data it hasnt seen. 
 

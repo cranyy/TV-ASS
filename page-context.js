@@ -392,6 +392,69 @@ window.addEventListener('message', async function (event) {
       window.postMessage({ name: 'iondvPage', action: event.data.action, requestId: event.data.requestId, data: res }, event.origin)
       break
     }
+    // submitCustomDateRange: what Select does (the dialog's own onSubmit), for when Select is disabled only because
+    // TradingView fixes the dialog's latest date (MAX_AVAILABLE_DATE = new Date()) when the page loads: a tab opened
+    // yesterday refuses today as a future date, while the submit itself clamps to the real today. Every other rule
+    // behind Select is checked here against the real date first; with check set it only reports whether it would submit.
+    case 'submitCustomDateRange': {
+      let res
+      try {
+        const iso = (d) => d instanceof Date ? `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}` : null
+        const day = (d) => new Date(d.getFullYear(), d.getMonth(), d.getDate()).getTime()
+        const want = event.data?.data || {}
+        const dlg = document.querySelector('[data-name="custom-date-range-dialog"]')
+        const fiberKey = dlg && Object.keys(dlg).find(k => k.startsWith('__reactFiber'))
+        let dates = null, deep = null, dialog = null, pageLimit = null
+        for (let fiber = fiberKey ? dlg[fiberKey] : null; fiber; fiber = fiber.return) {
+          const p = fiber.memoizedProps || {}
+          const v = p.value
+          if (!dates && v && typeof v.handleSetEndDate === 'function')
+            dates = v
+          if (!deep && v && v.dateRange && typeof v.setDeepHistoryDateRange === 'function')
+            deep = v
+          if (!dialog && typeof p.onSubmit === 'function' && 'submitButtonDisabled' in p)
+            dialog = p
+          if (!pageLimit && p.maxDate instanceof Date)
+            pageLimit = p.maxDate
+        }
+        // the picker is rendered below the dialog node, so its maxDate is found from a calendar input
+        if (!pageLimit) {
+          const input = dlg && dlg.querySelector('input')
+          const inputKey = input && Object.keys(input).find(k => k.startsWith('__reactFiber'))
+          for (let fiber = inputKey ? input[inputKey] : null; fiber && !pageLimit; fiber = fiber.return)
+            if (fiber.memoizedProps?.maxDate instanceof Date)
+              pageLimit = fiber.memoizedProps.maxDate
+        }
+        const today = new Date()
+        let reason = null
+        if (!dlg)
+          reason = 'the Custom date range dialog is not open'
+        else if (!dates || !deep || !dialog)
+          reason = 'the dialog\'s submit handler was not found (TradingView changed the dialog)'
+        else if (!(dates.startDate instanceof Date) || !(dates.endDate instanceof Date) || iso(dates.startDate) !== want.from || iso(dates.endDate) !== want.to)
+          reason = `the dialog holds ${iso(dates.startDate)} — ${iso(dates.endDate)}, not ${want.from} — ${want.to}`
+        else if (day(dates.startDate) > day(dates.endDate))
+          reason = 'the start is after the end'
+        else if (dates.minAvailableDate instanceof Date && day(dates.startDate) < day(dates.minAvailableDate))
+          reason = `it starts before the first available data (${iso(dates.minAvailableDate)})`
+        else if (day(dates.endDate) > day(today))
+          reason = 'it ends in the future'
+        else if (deep.dateRange.from instanceof Date && deep.dateRange.to instanceof Date && day(deep.dateRange.from) === day(dates.startDate) && day(deep.dateRange.to) === day(dates.endDate))
+          reason = 'that range is already active'
+        if (reason)
+          res = { success: false, reason, pageLimit: iso(pageLimit) }
+        else {
+          if (!want.check)
+            dialog.onSubmit()
+          res = { success: true, pageLimit: iso(pageLimit) }
+        }
+      } catch (err) {
+        console.warn('[TV-ASS] submitCustomDateRange error:', err)
+        res = { success: false, reason: err?.message || String(err) }
+      }
+      window.postMessage({ name: 'iondvPage', action: event.data.action, requestId: event.data.requestId, data: res }, event.origin)
+      break
+    }
     default:
       console.error(`[error] Unknown action for get data from page "${event.data.action}". Skip processing`)
       window.postMessage({name: 'iondvPage', action: event.data.action, data: null, message: `Unknown action: ${event.data.action}`}, event.origin)

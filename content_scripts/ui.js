@@ -172,46 +172,6 @@ ui.stylePopup = `<style>
       white-space: pre-line;
       word-break: break-word;
     }
-  .iondvpopup-table {
-    display: inline-table;
-    width: 100%;
-    margin: 8px 0 4px;
-    border-collapse: collapse;
-    font-size: 13px;
-    font-variant-numeric: tabular-nums;
-  }
-  .iondvpopup-table th,
-  .iondvpopup-table td {
-    padding: 1px 6px;
-    text-align: right;
-    white-space: nowrap;
-  }
-  .iondvpopup-table th:first-child,
-  .iondvpopup-table td:first-child {
-    padding-left: 0;
-    text-align: left;
-  }
-  .iondvpopup-table th {
-    font-size: 12px;
-    font-weight: normal;
-    border-bottom: 1px solid rgba(0, 0, 0, 0.2);
-  }
-  .iondvpopup-table .iondvpopup-wrap {
-    white-space: normal;
-  }
-  .iondvpopup-table .iondvpopup-sub {
-    font-size: 12px;
-    text-align: left;
-  }
-  .iondvpopup-strong td {
-    font-weight: bold;
-  }
-  .iondvpopup-sep td {
-    border-top: 1px solid rgba(0, 0, 0, 0.2);
-  }
-  .iondvpopup-neg {
-    color: #9c0019;
-  }
   .iondvpopup-button {
     position: relative;
     margin: 15px 5px -10px;
@@ -313,6 +273,304 @@ ui.showErrorPopup = async (msgText) => {
 ui.showWarningPopup = async (msgText) => {
   return await ui.alertPopup(msgText, false)
 }
+
+// a result report in TradingView's own look; every colour and size is a token on .iondvrep, and theme-dark redefines them
+ui.styleReport = `<style>
+  .iondvrep-shade {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    display: flex;
+    justify-content: center;
+    align-items: flex-start;
+    padding: 32px 16px;
+    overflow-y: auto;
+    box-sizing: border-box;
+    background: rgba(19, 23, 34, 0.36);
+  }
+  .iondvrep {
+    --rep-bg: #ffffff;
+    --rep-sunk: #f0f3fa;
+    --rep-line: #e0e3eb;
+    --rep-ink: #131722;
+    --rep-muted: #6a6d78;
+    --rep-seen: #2962ff;
+    --rep-seen-hover: #1e53e5;
+    --rep-up: #089981;
+    --rep-down: #f23645;
+    --rep-slow: #f57c00;
+    --rep-idle: #9598a1;
+    --rep-tone: var(--rep-idle);
+    --rep-font: -apple-system, BlinkMacSystemFont, "Trebuchet MS", Roboto, Ubuntu, sans-serif;
+    --rep-radius: 8px;
+    --rep-radius-small: 4px;
+    --rep-shadow: 0 2px 4px rgba(19, 23, 34, 0.08), 0 16px 48px rgba(19, 23, 34, 0.22);
+    --rep-s1: 4px;
+    --rep-s2: 8px;
+    --rep-s3: 12px;
+    --rep-s4: 16px;
+    --rep-s5: 24px;
+    --rep-s6: 32px;
+    box-sizing: border-box;
+    width: min(680px, 100%);
+    padding: var(--rep-s5) var(--rep-s5) var(--rep-s4);
+    border-radius: var(--rep-radius);
+    background: var(--rep-bg);
+    box-shadow: var(--rep-shadow);
+    color: var(--rep-ink);
+    font: 14px/1.5 var(--rep-font);
+    font-variant-numeric: tabular-nums;
+    text-align: left;
+    animation: iondvrep-in 160ms ease-out;
+  }
+  html.theme-dark .iondvrep {
+    --rep-bg: #1e222d;
+    --rep-sunk: #2a2e39;
+    --rep-line: #363a45;
+    --rep-ink: #d1d4dc;
+    --rep-muted: #868993;
+    --rep-seen: #3179f5;
+    --rep-seen-hover: #5b93f7;
+    --rep-up: #22ab94;
+    --rep-down: #f7525f;
+    --rep-slow: #ff9800;
+    --rep-idle: #6a6d78;
+    --rep-shadow: 0 2px 4px rgba(0, 0, 0, 0.3), 0 16px 48px rgba(0, 0, 0, 0.5);
+  }
+  .iondvrep--good { --rep-tone: var(--rep-up); }
+  .iondvrep--slow { --rep-tone: var(--rep-slow); }
+  .iondvrep--bad { --rep-tone: var(--rep-down); }
+  @keyframes iondvrep-in {
+    from { opacity: 0; transform: translateY(6px); }
+    to { opacity: 1; transform: none; }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .iondvrep { animation: none; }
+  }
+  .iondvrep * { box-sizing: border-box; }
+  .iondvrep :where(p, h2, h3, ul) { margin: 0; }
+  .iondvrep-head {
+    display: flex;
+    align-items: flex-start;
+    justify-content: space-between;
+    gap: var(--rep-s4);
+  }
+  .iondvrep-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--rep-muted);
+  }
+  .iondvrep-context {
+    font-size: 12px;
+    color: var(--rep-muted);
+  }
+  .iondvrep-close {
+    flex: none;
+    width: 32px;
+    height: 32px;
+    margin: calc(-1 * var(--rep-s1)) calc(-1 * var(--rep-s2)) 0 0;
+    border: 0;
+    border-radius: var(--rep-radius-small);
+    background: transparent;
+    color: var(--rep-muted);
+    font: 22px/1 var(--rep-font);
+    cursor: pointer;
+  }
+  .iondvrep-close:hover { background: var(--rep-sunk); color: var(--rep-ink); }
+  .iondvrep-verdict {
+    margin-top: var(--rep-s4);
+    padding-left: var(--rep-s3);
+    border-left: 3px solid var(--rep-tone);
+    font-size: 20px;
+    font-weight: 600;
+    line-height: 1.3;
+  }
+  .iondvrep-support {
+    max-width: 62ch;
+    margin-top: var(--rep-s1);
+    padding-left: calc(var(--rep-s3) + 3px);
+    color: var(--rep-muted);
+  }
+  .iondvrep-timeline { margin: var(--rep-s5) 0 var(--rep-s2); }
+  .iondvrep-timeline-row {
+    display: flex;
+    justify-content: space-between;
+    gap: var(--rep-s4);
+    font-size: 13px;
+    font-weight: 600;
+  }
+  .iondvrep-timeline-new { color: var(--rep-tone); text-align: right; }
+  .iondvrep-timeline-dates {
+    margin-top: var(--rep-s2);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--rep-muted);
+  }
+  .iondvrep-timeline-dates span:last-child { text-align: right; }
+  .iondvrep-timeline-dates b { font-weight: 600; color: var(--rep-ink); }
+  .iondvrep-bar {
+    display: flex;
+    gap: 2px;
+    height: 12px;
+    margin-top: var(--rep-s1);
+  }
+  .iondvrep-bar span { min-width: 6px; }
+  .iondvrep-bar-seen {
+    border-radius: 6px 0 0 6px;
+    background: var(--rep-seen);
+  }
+  /* the dates the optimizer never saw are hatched, in the colour of the verdict */
+  .iondvrep-bar-new,
+  .iondvrep-swatch-new {
+    background: repeating-linear-gradient(135deg, var(--rep-tone) 0 3px, transparent 3px 6px);
+    box-shadow: inset 0 0 0 1px var(--rep-tone);
+  }
+  .iondvrep-bar-new { border-radius: 0 6px 6px 0; }
+  .iondvrep-scroll { overflow-x: auto; }
+  .iondvrep-table {
+    width: 100%;
+    border-collapse: collapse;
+    font-size: 13px;
+  }
+  .iondvrep-table th, .iondvrep-table td {
+    padding: 6px var(--rep-s2);
+    border-bottom: 1px solid var(--rep-line);
+    text-align: right;
+    vertical-align: top;
+    white-space: nowrap;
+  }
+  .iondvrep-table th:first-child, .iondvrep-table td:first-child {
+    padding-left: 0;
+    text-align: left;
+  }
+  .iondvrep-table th:last-child, .iondvrep-table td:last-child { padding-right: 0; }
+  .iondvrep-table thead th {
+    padding-bottom: var(--rep-s1);
+    font-size: 12px;
+    font-weight: 400;
+    color: var(--rep-muted);
+    vertical-align: bottom;
+  }
+  .iondvrep-table tbody th { font-weight: 400; }
+  .iondvrep-table .iondvrep-section th {
+    padding: var(--rep-s4) 0 var(--rep-s1);
+    font-size: 12px;
+    font-weight: 600;
+    color: var(--rep-ink);
+    text-align: left;
+  }
+  .iondvrep-table .iondvrep-span {
+    color: var(--rep-muted);
+    text-align: left;
+    white-space: normal;
+  }
+  .iondvrep-swatch {
+    display: inline-block;
+    width: 10px;
+    height: 10px;
+    margin-right: 6px;
+    border-radius: 2px;
+    vertical-align: -1px;
+  }
+  .iondvrep-swatch-seen { background: var(--rep-seen); }
+  .iondvrep-sub { display: block; font-size: 11px; color: var(--rep-muted); }
+  .iondvrep-aside { margin-left: var(--rep-s1); font-size: 11px; color: var(--rep-muted); }
+  .iondvrep-up { color: var(--rep-up); }
+  .iondvrep-down { color: var(--rep-down); }
+  .iondvrep-tag {
+    display: inline-block;
+    margin-left: var(--rep-s1);
+    padding: 0 5px;
+    border-radius: var(--rep-radius-small);
+    background: var(--rep-sunk);
+    color: var(--rep-muted);
+    font-size: 11px;
+    line-height: 16px;
+  }
+  .iondvrep-notes {
+    margin-top: var(--rep-s3);
+    padding-left: var(--rep-s4);
+    font-size: 13px;
+  }
+  .iondvrep-notes li + li { margin-top: var(--rep-s1); }
+  .iondvrep-alert {
+    margin-top: var(--rep-s4);
+    padding: var(--rep-s2) var(--rep-s3);
+    border-left: 3px solid var(--rep-slow);
+    border-radius: var(--rep-radius-small);
+    background: var(--rep-sunk);
+    font-size: 13px;
+  }
+  .iondvrep-alert p + p { margin-top: var(--rep-s1); }
+  .iondvrep-foot {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: var(--rep-s4);
+    margin-top: var(--rep-s5);
+    padding-top: var(--rep-s4);
+    border-top: 1px solid var(--rep-line);
+    font-size: 12px;
+    color: var(--rep-muted);
+  }
+  .iondvrep-file { color: var(--rep-ink); overflow-wrap: anywhere; }
+  .iondvrep-ok {
+    flex: none;
+    min-width: 88px;
+    height: 36px;
+    padding: 0 var(--rep-s5);
+    border: 0;
+    border-radius: 6px;
+    background: var(--rep-seen);
+    color: #ffffff;
+    font: 600 14px/1 var(--rep-font);
+    cursor: pointer;
+  }
+  .iondvrep-ok:hover { background: var(--rep-seen-hover); }
+  .iondvrep-ok:active { transform: translateY(1px); }
+  .iondvrep-ok:focus-visible,
+  .iondvrep-close:focus-visible {
+    outline: none;
+    box-shadow: 0 0 0 2px var(--rep-bg), 0 0 0 4px var(--rep-seen);
+  }
+  @media (max-width: 520px) {
+    .iondvrep-shade { padding: 16px; }
+    .iondvrep { padding: var(--rep-s4); }
+    .iondvrep-verdict { font-size: 18px; }
+    .iondvrep-foot { flex-direction: column; align-items: stretch; }
+  }
+</style>`
+
+// report = { tone: 'good' | 'slow' | 'bad' | 'idle', html }; resolves when it is closed (OK, ×, Escape).
+// It takes ui.alertPopup's ids (#iondvAlertPopup, OK = #iondvPopupCloseBtn), so the one-popup-at-a-time rule and
+// anything that waits for or closes TV-ASS popups, such as the test harness, treat it like every other popup.
+ui.reportPopup = (report) => new Promise(resolve => {
+  if (document.getElementById('iondvAlertPopup'))
+    return resolve()
+  const shade = document.body.appendChild(document.createElement('div'))
+  shade.id = 'iondvAlertPopup'
+  shade.className = 'iondvrep-shade'
+  shade.innerHTML = `${ui.styleReport}<section class="iondvrep iondvrep--${report.tone || 'idle'}" role="dialog" aria-modal="true" aria-labelledby="iondvReportTitle">${report.html}</section>`
+  const close = () => {
+    document.removeEventListener('keydown', onKey, true)
+    shade.remove()
+    resolve(true)
+  }
+  const onKey = (event) => {
+    if (event.key === 'Escape' || event.key === 'Enter') {
+      event.preventDefault()
+      event.stopPropagation()
+      close()
+    }
+  }
+  document.addEventListener('keydown', onKey, true)
+  shade.querySelectorAll('[data-iondvrep-close]').forEach(button => { button.onclick = close })
+  // focusing OK must not scroll a tall report past its verdict
+  const ok = shade.querySelector('.iondvrep-ok')
+  if (ok)
+    ok.focus({ preventScroll: true })
+  shade.scrollTop = 0
+})
 
 ui.statusMessageRemove = () => {
   const statusMessageEl = document.getElementById('iondvStatus')

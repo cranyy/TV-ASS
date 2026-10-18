@@ -1315,11 +1315,7 @@ action._wfaRun = async (testParams, strategyData, allRangeParams, addInfo) => {
     throw runError
   }
   ui.statusMessageRemove()
-  const text = action._wfaSummary(testParams, wfa, problems)
-  if (problems.length || wfa.validationError)
-    await ui.showWarningPopup(text)
-  else
-    await ui.showPopup(text)
+  await ui.reportPopup(action._wfaReport(testParams, wfa, problems))
 }
 
 action._wfaStart = async (testParams, wfa) => {
@@ -1327,6 +1323,10 @@ action._wfaStart = async (testParams, wfa) => {
   if (!full || !full.from || !full.to)
     throw new Error(`Walk-forward check: "${wfa.original.label}" has no fixed dates to split. Choose a custom date range or "Last N days" and run again.`)
   const split = action._wfaSplit(full.from, full.to, testParams.wfaTrainPercent)
+  // the validation dates are set only after the whole training run, so find out now whether TradingView takes them
+  const ahead = await tv.setTestingPeriod(split.validation.from, split.validation.to, null, { check: true })
+  if (!ahead.ok)
+    throw new Error(`Walk-forward check: stopped before the run, because the validation dates (${action._wfaRange(split.validation)}) would be refused at its end. ${ahead.message}`)
   wfa.periodTouched = true
   const set = await action._wfaSetWindow(testParams, split.training)
   if (!set.ok)
@@ -1475,151 +1475,272 @@ action._wfaRestore = async (testResults, wfa) => {
   return problems
 }
 
-action._wfaSummary = (testResults, wfa, problems) => {
+// the end-of-run report: a verdict for the winner, the split as a timeline, the winner's numbers on both parts, then the other top results
+action._wfaReport = (testResults, wfa, problems) => {
+  const h = action._wfaHtml
   const split = testResults.wfa
   const target = testResults.optParamName
-  const net = action._wfaNet
-  const signed = action._wfaSigned
-  const describe = (part, row) => {
-    const value = net(row)
-    const trades = row && typeof row['Total trades: All'] === 'number' ? `, ${row['Total trades: All']} trades` : ''
-    if (value === null)
-      return `${action._wfaRange(part)} (${part.days} days): net profit is not in the report${trades}`
-    const month = value / part.days * 30
-    return `${action._wfaRange(part)} (${part.days} days): ${signed(value)} % net profit${trades}, about ${month < 0 ? '−' : ''}${Math.abs(month).toFixed(1)} % a month`
-  }
-  const lines = []
-  const finish = () => {
-    const restored = [wfa.periodRestored && `your dates are back to "${wfa.original.label}"`, wfa.winnerApplied && 'the winner is applied'].filter(Boolean).join(' and ')
-    if (restored)
-      lines.push(`${restored[0].toUpperCase()}${restored.slice(1)}.`)
-    if (problems.length)
-      lines.push('', ...problems)
-    return lines.join('\n')
-  }
+  const checks = wfa.checks || []
+  const winner = checks[0] || null
+  const isRead = (check) => !!(check && check.row && !check.error && !check.empty)
+  const winnerRead = isRead(winner)
+  const percent = (value) => action._wfaSignedText(value, 2, '\u00a0%')
+  const trainMonth = action._wfaMonthly(wfa.winnerRow, split.training)
+  const newMonth = winnerRead ? action._wfaMonthly(winner.row, split.validation) : null
+  const newRange = action._wfaRange(split.validation)
+
+  let tone = 'idle'
+  let verdict = ''
+  let support = ''
   if (wfa.stopped === 'cycles') {
-    lines.push('Stopped before the walk-forward check.')
-    return finish()
-  }
-  if (!wfa.winnerPropVal) {
-    lines.push('Walk-forward check skipped: no result passed your filters on the training dates, so there was nothing to test on the new dates.')
-    return finish()
-  }
-  if (wfa.validationError) {
-    lines.push(`The validation step did not run: ${action._wfaClause(wfa.validationError)}. The training results are saved.`)
-    return finish()
+    verdict = 'Stopped before the new-dates check'
+    support = wfa.winnerRow ? 'Below is the best result the training run found. It was not tested on the new dates.' : ''
+  } else if (!wfa.winnerPropVal) {
+    verdict = 'Nothing to test on the new dates'
+    support = 'No result passed your filters on the training dates.'
+  } else if (wfa.validationError) {
+    verdict = 'The winner was not tested on the new dates'
+    support = `${h(action._wfaClause(wfa.validationError))}.`
+  } else if (!winner || !winner.row) {
+    verdict = 'Stopped before the winner was tested on the new dates'
+  } else if (winner.error) {
+    verdict = 'The winner could not be tested on the new dates'
+    support = `${h(action._wfaClause(winner.message))}.`
+  } else if (winner.empty) {
+    tone = 'slow'
+    verdict = 'No trades on the new dates'
+    support = `The winner did not trade at all between ${newRange}.`
+  } else if (newMonth === null) {
+    verdict = 'Tested on the new dates'
+    support = 'Net profit % is not in the report, so the two parts cannot be compared.'
+  } else if (newMonth < 0) {
+    tone = 'bad'
+    verdict = 'Lost money on dates it never saw'
+    support = `${percent(action._wfaNet(winner.row))} on the new dates (${percent(newMonth)} a month)${trainMonth !== null ? `, after ${percent(trainMonth)} a month in training` : ''}.`
+  } else if (newMonth === 0) {
+    tone = 'slow'
+    verdict = 'Broke even on dates it never saw'
+    support = `It traded on the new dates without making or losing money${trainMonth !== null ? `, after ${percent(trainMonth)} a month in training` : ''}.`
+  } else if (trainMonth === null || trainMonth <= 0) {
+    tone = 'good'
+    verdict = 'Made money on dates it never saw'
+    support = `${percent(newMonth)} a month on the new dates${trainMonth === null ? '' : trainMonth < 0 ? `, although it lost ${percent(trainMonth)} a month in training` : ', although it broke even in training'}.`
+  } else {
+    const kept = newMonth / trainMonth
+    tone = kept >= 0.8 ? 'good' : 'slow'
+    verdict = kept >= 0.8 ? 'Held up on dates it never saw' : 'Made money on dates it never saw, but more slowly'
+    support = kept >= 1
+      ? `${percent(newMonth)} a month on the new dates, at least as fast as the ${percent(trainMonth)} a month in training.`
+      : `${percent(newMonth)} a month on the new dates against ${percent(trainMonth)} a month in training: ${Math.round(kept * 100)}\u00a0% of its training pace.`
   }
 
-  const checks = wfa.checks
+  const context = [`${testResults.ticker} ${testResults.timeFrame}`, testResults.shortName, testResults.method, `${testResults.cycles} cycles`].filter(Boolean).map(h).join(', ')
+  const head = `
+    <header class="iondvrep-head">
+      <div>
+        <h2 class="iondvrep-title" id="iondvReportTitle">Walk-forward check</h2>
+        <p class="iondvrep-context">${context}, ${testResults.isMaximizing === false ? 'minimizing' : 'maximizing'} ${h(target)}</p>
+      </div>
+      <button type="button" class="iondvrep-close" data-iondvrep-close aria-label="Close">×</button>
+    </header>
+    <p class="iondvrep-verdict">${verdict}</p>
+    ${support ? `<p class="iondvrep-support">${support}</p>` : ''}`
+
+  const newRate = winnerRead && newMonth !== null ? `${percent(newMonth)} a month` : winner && winner.empty ? 'no trades' : 'not tested'
+  const timeline = `
+    <div class="iondvrep-timeline">
+      <div class="iondvrep-timeline-row">
+        <span>${trainMonth !== null ? `${percent(trainMonth)} a month` : ''}</span>
+        <span class="iondvrep-timeline-new">${newRate}</span>
+      </div>
+      <div class="iondvrep-bar" aria-hidden="true">
+        <span class="iondvrep-bar-seen" style="flex-grow: ${split.training.days}"></span>
+        <span class="iondvrep-bar-new" style="flex-grow: ${split.validation.days}"></span>
+      </div>
+      <div class="iondvrep-timeline-row iondvrep-timeline-dates">
+        <span><b>Training</b> ${action._wfaRange(split.training)}, ${split.training.days} days</span>
+        <span><b>New dates</b> ${newRange}, ${split.validation.days} days</span>
+      </div>
+    </div>`
+
+  return {
+    tone,
+    html: head + timeline + action._wfaTable(testResults, wfa) + action._wfaNotes(testResults, wfa) + action._wfaFooter(testResults, wfa, problems)
+  }
+}
+
+action._wfaMetrics = (target) => {
+  const fixed = (digits, unit = '') => (value) => `${action._wfaNumber(value, digits)}${unit}`
+  const signedPercent = (value) => action._wfaSignedText(value, 2, '\u00a0%')
+  const metrics = [
+    { label: 'Net profit', key: 'Net profit %: All', show: signedPercent, signed: true, subKey: 'Net profit: All', sub: (value) => action._wfaSignedText(value, 2) },
+    { label: 'Per month', monthly: true, show: signedPercent, signed: true },
+    { label: 'Trades', key: 'Total trades: All', show: fixed(0), perMonth: true },
+    { label: 'Win rate', key: 'Percent profitable: All', show: fixed(2, '\u00a0%') },
+    { label: 'Profit factor', key: 'Profit factor: All', show: fixed(2) },
+    { label: 'Max drawdown', key: 'Max equity drawdown %: All', show: fixed(2, '\u00a0%') }
+  ]
+  if (!metrics.some(metric => metric.key === target || metric.subKey === target))
+    metrics.push({ label: target.replace(/: All$/, ''), key: target, show: (value) => String(backtest.convertValue(value)) })
+  metrics.forEach(metric => { metric.optimized = metric.key === target || metric.subKey === target })
+  return metrics
+}
+
+// one table: the winner on the training dates and on the new dates, then the next best and the starting settings on the new dates
+action._wfaTable = (testResults, wfa) => {
+  if (!wfa.winnerRow)
+    return ''
+  const h = action._wfaHtml
+  const split = testResults.wfa
+  const target = testResults.optParamName
+  const metrics = action._wfaMetrics(target)
+  const checks = wfa.checks || []
+  const winner = checks[0] || null
+  const isRead = (check) => !!(check && check.row && !check.error && !check.empty)
+  const value = (row, key) => row && typeof row[key] === 'number' ? row[key] : null
+  const cells = (row, part, withSub) => metrics.map(metric => {
+    const main = metric.monthly ? action._wfaMonthly(row, part) : value(row, metric.key)
+    if (main === null)
+      return '<td>n/a</td>'
+    let sub = ''
+    if (withSub && metric.subKey && value(row, metric.subKey) !== null)
+      sub = metric.sub(value(row, metric.subKey))
+    else if (withSub && metric.perMonth && part.days)
+      sub = `${action._wfaNumber(main / part.days * 30, 1)} a month`
+    const sign = metric.signed ? (main > 0 ? ' class="iondvrep-up"' : main < 0 ? ' class="iondvrep-down"' : '') : ''
+    return `<td><span${sign}>${metric.show(main)}</span>${sub ? `<span class="iondvrep-sub">${sub}</span>` : ''}</td>`
+  }).join('')
+  const span = (text) => `<td colspan="${metrics.length}" class="iondvrep-span">${text}</td>`
+  const notRead = (check) => !check || !check.row ? span('not checked')
+    : check.error ? span(`could not be tested: ${h(action._wfaClause(check.message))}`)
+    : span('no trades')
+  // the training values of the optimized metric itself (Net profit: All is the money figure, not the % column), which ranked the next best
+  const ranked = metrics.find(metric => metric.optimized)
+  const rankedKey = ranked.subKey === target ? ranked.subKey : ranked.key
+  const rankedShow = ranked.subKey === target ? ranked.sub : ranked.show
+  const rankedBy = (list) => {
+    const values = list.map(check => value(check.trainingRow, rankedKey)).filter(v => v !== null)
+    if (!values.length)
+      return ''
+    const [first, last] = [values[0], values[values.length - 1]]
+    return ` <span class="iondvrep-aside">${h(target)} ${values.length === 1 || first === last ? rankedShow(first) : `${rankedShow(first)} to ${rankedShow(last)}`} in training</span>`
+  }
+
+  const rows = [`<tr class="iondvrep-section"><th colspan="${metrics.length + 1}" scope="colgroup">${wfa.winnerPropVal ? 'The winner' : 'The best so far'}</th></tr>`]
+  rows.push(`<tr><th scope="row"><span class="iondvrep-swatch iondvrep-swatch-seen"></span>Training</th>${cells(wfa.winnerRow, split.training, true)}</tr>`)
+  if (wfa.winnerPropVal && wfa.stopped !== 'cycles')
+    rows.push(`<tr><th scope="row"><span class="iondvrep-swatch iondvrep-swatch-new"></span>New dates</th>${isRead(winner) ? cells(winner.row, split.validation, true) : winner && winner.row ? notRead(winner) : span('not tested')}</tr>`)
+
+  const others = action._wfaTableChecks(checks).filter(check => check !== winner)
+  const hidden = checks.filter(check => check.rank > 5 && check.row && !others.includes(check))
+  if (others.length && !wfa.validationError) {
+    const runners = checks.filter(check => check.kind === 'runner')
+    rows.push(`<tr class="iondvrep-section"><th colspan="${metrics.length + 1}" scope="colgroup">${runners.length ? `The next best, on the new dates${rankedBy(runners)}` : 'Your starting settings, on the new dates'}</th></tr>`)
+    const name = (check) => check.kind === 'start' ? 'Your start' : `#${check.rank}${check.isStart ? ' <span class="iondvrep-tag">your start</span>' : ''}`
+    const row = (check) => {
+      let body
+      if (!isRead(check))
+        body = notRead(check)
+      else if (isRead(winner) && action._wfaSameReport(check.row, winner.row))
+        body = span('same result as the winner')
+      else
+        body = cells(check.row, split.validation, false)
+      return `<tr><th scope="row">${name(check)}</th>${body}</tr>`
+    }
+    rows.push(...others.filter(check => check.rank <= 5).map(row))
+    if (hidden.length) {
+      const [first, last] = [hidden[0].rank, hidden[hidden.length - 1].rank]
+      rows.push(`<tr><td colspan="${metrics.length + 1}" class="iondvrep-span">${hidden.length === 1 ? `#${first} was checked too` : `#${first} to #${last} were checked too`}; the _validation file has them.</td></tr>`)
+    }
+    rows.push(...others.filter(check => !(check.rank <= 5)).map(row))
+  }
+  const head = metrics.map(metric => `<th scope="col">${h(metric.label)}${metric.optimized ? '<span class="iondvrep-tag">optimized</span>' : ''}</th>`).join('')
+  return `
+    <div class="iondvrep-scroll">
+      <table class="iondvrep-table">
+        <thead><tr><th></th>${head}</tr></thead>
+        <tbody>${rows.join('')}</tbody>
+      </table>
+    </div>`
+}
+
+action._wfaNotes = (testResults, wfa) => {
+  const checks = wfa.checks || []
+  const split = testResults.wfa
   const winner = checks[0]
-  const winnerRead = !!(winner.row && !winner.error)
-  lines.push('<b>Walk-forward check done</b>', '')
+  const notes = []
   if (wfa.startIsWinner)
-    lines.push('Nothing beat your starting settings on the training dates, so the winner is your starting settings.', '')
-  if (wfa.trainingChecked < testResults.wfaTop) {
+    notes.push('Nothing beat your starting settings on the training dates, so the winner is your starting settings.')
+  if (winner && wfa.trainingChecked < testResults.wfaTop) {
     const n = wfa.trainingChecked
-    lines.push(`Only ${n} different result${n === 1 ? '' : 's'} passed your filters on the training dates, so ${n} ${n === 1 ? 'was' : 'were'} checked.`, '')
+    notes.push(`Only ${n} different result${n === 1 ? '' : 's'} passed your filters on the training dates, so ${n === 1 ? 'only the winner was' : `${n} were`} checked.`)
   }
-  lines.push('On the dates it was picked on', describe(split.training, wfa.winnerRow), '')
-  lines.push('On new dates it never saw')
-  if (!winner.row)
-    lines.push(`${action._wfaRange(split.validation)} (${split.validation.days} days): not checked.`)
-  else if (winner.error)
-    lines.push(`${action._wfaRange(split.validation)} (${split.validation.days} days): could not be tested (${action._wfaClause(winner.message)}).`)
-  else if (winner.empty)
-    lines.push(`${action._wfaRange(split.validation)}: no trades in those ${split.validation.days} days.`)
-  else
-    lines.push(describe(split.validation, winner.row))
-  if (winnerRead && !winner.empty && target !== 'Net profit %: All') {
-    const value = (v) => typeof v === 'number' ? backtest.convertValue(v) : 'n/a'
-    lines.push(`${target}: ${value(wfa.winnerRow[target])} on the training dates, ${value(winner.row[target])} on the new dates.`)
-  }
-
-  const validationNet = winnerRead && !winner.empty ? net(winner.row) : null
-  const trainingNet = net(wfa.winnerRow)
-  let verdict = null
-  if (winnerRead && winner.empty)
-    verdict = 'It made no trades on the new dates.'
-  else if (validationNet !== null && validationNet <= 0)
-    verdict = 'It lost money on the new dates.'
-  else if (validationNet !== null && (trainingNet === null || trainingNet <= 0))
-    verdict = 'It made money on the new dates.'
-  else if (validationNet !== null) {
-    const pace = action._wfaPace(split, trainingNet, validationNet)
-    verdict = pace >= 1
-      ? 'It made money on the new dates, at least as fast as on the training dates.'
-      : `It made money on the new dates, at about ${Math.round(pace * 100)} % of its training pace.`
-  }
-  if (verdict)
-    lines.push('', `<b>${verdict}</b>`)
-  lines.push(action._wfaTable(testResults, wfa))
-
-  const runners = checks.filter(check => check.kind === 'runner')
-  const runnersRead = runners.filter(check => check.row)
-  if (testResults.wfaTop > 1 && runnersRead.length) {
-    const ran = runnersRead.filter(check => !check.error)
-    const failed = runnersRead.length - ran.length
-    const won = ran.filter(check => !check.empty && net(check.row) > 0).length
-    const failedText = failed ? ` (${failed} could not be tested)` : ''
+  const isRead = (check) => !!(check && check.row && !check.error && !check.empty)
+  const runners = checks.filter(check => check.kind === 'runner' && check.row)
+  if (runners.length) {
+    const ran = runners.filter(check => !check.error)
+    const won = ran.filter(check => !check.empty && action._wfaNet(check.row) > 0).length
+    const failed = runners.length - ran.length
+    const failedText = failed ? ` ${failed} could not be tested.` : ''
+    const same = isRead(winner) ? ran.filter(check => isRead(check) && action._wfaSameReport(check.row, winner.row)) : []
+    const names = (list) => list.length > 2 && list.every((check, i) => !i || check.rank === list[i - 1].rank + 1)
+      ? `#${list[0].rank} to #${list[list.length - 1].rank}`
+      : list.map(check => `#${check.rank}`).join(list.length === 2 ? ' and ' : ', ')
     if (!ran.length)
-      lines.push(`Next ${runners.length} best: none could be tested.`)
-    else if (won === ran.length)
-      lines.push(`Next ${runners.length} best: ${ran.length === 1 ? 'it' : `all ${ran.length} that ran`} ${validationNet > 0 ? 'also ' : ''}made money on the new dates${failedText}.`)
-    else
-      lines.push(`Next ${runners.length} best: ${won} of ${ran.length} that ran made money on the new dates${failedText}.`)
+      notes.push('None of the next best could be tested.')
+    else if (same.length === ran.length)
+      notes.push(`${names(same)} got exactly the winner's result on the new dates, so the inputs they change make no difference there.${failedText}`)
+    else {
+      notes.push(won === ran.length
+        ? `${ran.length === 1 ? 'The next best result also' : `All ${ran.length} of the next best also`} made money on the new dates.${failedText}`
+        : `${won ? won : 'None'} of the ${ran.length} next best made money on the new dates.${failedText}`)
+      if (same.length)
+        notes.push(`${names(same)} got exactly the winner's result there.`)
+    }
+  }
+  const start = checks.find(check => check.isStart)
+  if (start && isRead(start) && start !== winner) {
+    const startNet = action._wfaNet(start.row)
+    const winnerNet = isRead(winner) ? action._wfaNet(winner.row) : null
+    if (startNet !== null) {
+      const startTraining = action._wfaNet(start.trainingRow)
+      let text = `Your starting settings made ${startTraining !== null ? `${action._wfaSignedText(startTraining, 2, '\u00a0%')} in training and ` : ''}${action._wfaSignedText(startNet, 2, '\u00a0%')} on the new dates`
+      if (winnerNet !== null) {
+        const gap = winnerNet - startNet
+        text += gap > 0 ? `; there the winner did ${action._wfaNumber(gap, 2)} percentage points better.` : gap < 0 ? `; there the winner did ${action._wfaNumber(gap, 2)} percentage points worse.` : ', the same as the winner.'
+      } else {
+        text += '.'
+      }
+      notes.push(text)
+    }
+  } else if (start && start.empty) {
+    notes.push('Your starting settings made no trades on the new dates.')
   }
   if (wfa.stopped === 'validation')
-    lines.push(`Stopped: ${checks.filter(check => check.row).length} of ${checks.length} were checked.`)
-  return finish()
+    notes.push(`Stopped: ${checks.filter(check => check.row).length} of ${checks.length} were checked.`)
+  if (wfa.validationError && wfa.winnerPropVal)
+    notes.push(`To test it by hand: load the _training_final file with CSV Import, then set the testing period to ${action._wfaRange(split.validation)}.`)
+  return notes.length ? `<ul class="iondvrep-notes">${notes.map(note => `<li>${note}</li>`).join('')}</ul>` : ''
+}
+
+action._wfaFooter = (testResults, wfa, problems) => {
+  const fileName = (part) => action._resultsCsvName({ ...testResults, wfaWindow: part }).replace(/[\\/:*?"<>|]/g, '_')
+  const saved = (wfa.checks || []).some(check => check.row)
+    ? `Every checked result is in <span class="iondvrep-file">${action._wfaHtml(fileName('validation'))}</span>.`
+    : `The training results are in <span class="iondvrep-file">${action._wfaHtml(fileName('training'))}</span>.`
+  const restored = [wfa.periodRestored && `your dates are back to "${action._wfaHtml(wfa.original.label)}"`, wfa.winnerApplied && 'the winner is on the chart'].filter(Boolean).join(' and ')
+  const alert = problems.length ? `<div class="iondvrep-alert" role="alert">${problems.map(problem => `<p>${action._wfaHtml(problem)}</p>`).join('')}</div>` : ''
+  return `${alert}
+    <footer class="iondvrep-foot">
+      <p>${saved}${restored ? ` ${restored[0].toUpperCase()}${restored.slice(1)}.` : ''}</p>
+      <button type="button" class="iondvrep-ok" id="iondvPopupCloseBtn" data-iondvrep-close>OK</button>
+    </footer>`
 }
 
 action._wfaTableChecks = (checks) => {
   const shown = checks.filter(check => check.rank <= 5)
   const start = checks.find(check => check.isStart)
   return start && !shown.includes(start) ? [...shown, start] : shown
-}
-
-action._wfaTable = (testResults, wfa) => {
-  const split = testResults.wfa
-  const target = testResults.optParamName
-  const netKey = 'Net profit %: All'
-  const withTarget = target !== netKey
-  const shown = action._wfaTableChecks(wfa.checks)
-  if (shown.length < 2)
-    return ''
-  const percent = (value) => value === null ? 'n/a' : `${action._wfaSigned(value)} %`
-  const value = (v) => typeof v === 'number' ? backtest.convertValue(v) : 'n/a'
-  const cell = (text, cls) => `<td${cls ? ` class="${cls}"` : ''}>${text}</td>`
-  const row = (check) => {
-    const name = check.kind === 'start' ? 'Start' : `${check.kind === 'winner' ? 'Winner' : `#${check.rank}`}${check.isStart ? ' (start)' : ''}`
-    const trainingNet = action._wfaNet(check.trainingRow)
-    const read = !!(check.row && !check.error && !check.empty)
-    const newNet = read ? action._wfaNet(check.row) : null
-    const status = !check.row ? 'not checked' : check.error ? 'not tested' : 'no trades'
-    const trades = check.empty ? 0 : read && typeof check.row['Total trades: All'] === 'number' ? check.row['Total trades: All'] : ''
-    let pace = ''
-    if (newNet !== null)
-      pace = newNet <= 0 ? 'lost' : trainingNet > 0 ? `${Math.round(action._wfaPace(split, trainingNet, newNet) * 100)} %` : 'n/a'
-    const cells = [cell(name)]
-    if (withTarget)
-      cells.push(cell(value(check.trainingRow ? check.trainingRow[target] : null)), cell(read ? value(check.row[target]) : status))
-    cells.push(cell(percent(trainingNet)), cell(read ? percent(newNet) : withTarget ? '' : status, newNet < 0 ? 'iondvpopup-neg' : ''))
-    cells.push(cell(trades), cell(pace, pace === 'lost' ? 'iondvpopup-neg' : ''))
-    const cls = check.kind === 'winner' ? 'iondvpopup-strong' : !(check.rank <= 5) ? 'iondvpopup-sep' : ''
-    return `<tr${cls ? ` class="${cls}"` : ''}>${cells.join('')}</tr>`
-  }
-  const group = (text) => `<th colspan="2" class="iondvpopup-wrap">${text}</th>`
-  const head = `<tr><th></th>${withTarget ? group(`${target} (optimized)`) : ''}${group(withTarget ? netKey : `${netKey} (optimized)`)}${group('On the new dates')}</tr>` +
-    `<tr><th></th>${'<th>Training</th><th>New dates</th>'.repeat(withTarget ? 2 : 1)}<th>Trades</th><th>Pace</th></tr>`
-  const body = shown.filter(check => check.rank <= 5).map(row)
-  const hidden = wfa.checks.filter(check => check.rank > 5 && check.row && !shown.includes(check))
-  if (hidden.length) {
-    const [first, last] = [hidden[0].rank, hidden[hidden.length - 1].rank]
-    const text = hidden.length === 1 ? `#${first} was checked too; it is` : `#${first} – #${last} were checked too; they are`
-    body.push(`<tr><td class="iondvpopup-sub" colspan="${withTarget ? 7 : 5}">${text} in the _validation file.</td></tr>`)
-  }
-  body.push(...shown.filter(check => !(check.rank <= 5)).map(row))
-  return `<table class="iondvpopup-table"><thead>${head}</thead><tbody>${body.join('')}</tbody></table>`
 }
 
 action._wfaProgress = (testResults, wfa) => {
@@ -1692,9 +1813,20 @@ action._wfaSameReport = (a, b) => {
 
 action._wfaNet = (row) => row && typeof row['Net profit %: All'] === 'number' ? row['Net profit %: All'] : null
 
-action._wfaSigned = (value) => `${value > 0 ? '+' : value < 0 ? '−' : ''}${Math.abs(value).toFixed(2)}`
+action._wfaNumber = (value, digits = 2) => Math.abs(value).toLocaleString('en-US', { minimumFractionDigits: digits, maximumFractionDigits: digits })
 
-action._wfaPace = (split, trainingNet, validationNet) => (validationNet / split.validation.days) / (trainingNet / split.training.days)
+action._wfaSignedText = (value, digits = 2, unit = '') => typeof value !== 'number' || !Number.isFinite(value)
+  ? '—'
+  : `${value > 0 ? '+' : value < 0 ? '−' : ''}${action._wfaNumber(value, digits)}${unit}`
+
+// net profit % spread over 30-day months, so parts of different length compare
+action._wfaMonthly = (row, part) => {
+  const net = action._wfaNet(row)
+  return net === null || !part || !part.days ? null : net / part.days * 30
+}
+
+action._wfaHtml = (text) => String(text === null || text === undefined ? '' : text)
+  .replace(/[&<>"']/g, ch => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[ch])
 
 action._wfaClause = (text) => String(text || 'no reason given').trim().replace(/\.+$/, '')
 

@@ -1745,7 +1745,8 @@ tv._isTestingPeriodPresetSelected = async (label) => {
   return selected
 }
 
-tv.setTestingPeriod = async (from, to, label) => {
+// with { check: true } a concrete range is only tried in the dialog and cancelled: ok means Select would take it
+tv.setTestingPeriod = async (from, to, label, { check = false } = {}) => {
   const closeMenu = async (btn) => {
     // re-click the range button toggles the menu closed; verify no Custom-date row remains
     try {
@@ -1762,6 +1763,8 @@ tv.setTestingPeriod = async (from, to, label) => {
     // Already matching?
     if (before && from && to && before.from === from && before.to === to)
       return { ok: true, message: 'Testing period already matches.' }
+    if (check && (!from || !to))
+      return { ok: false, message: 'Only a range with both dates can be checked.' }
 
     page.mouseClick(btn)
     await page.waitForTimeout(500)
@@ -1819,6 +1822,9 @@ tv.setTestingPeriod = async (from, to, label) => {
     //    for dates TradingView rejects (future, before the first available data). Pinning the
     //    concrete dates of a preset that already resolves to the target takes TWO commits:
     //    [to,to] first, then [from,to].
+    //  - "Future" means after the moment the page loaded: a tab opened yesterday keeps Select
+    //    disabled for today. Then the dialog is submitted through its own handler instead
+    //    (page-context.js "submitCustomDateRange"), which checks the other rules against the real date.
     //  - Cancel never commits.
     const isoRe = /^\d{4}-\d{2}-\d{2}$/
     const readDlgInputs = () => {
@@ -1868,9 +1874,25 @@ tv.setTestingPeriod = async (from, to, label) => {
       if (!(await pollInputs(wantFrom, wantTo)))
         return { ok: false, message: `Custom date range dialog did not settle on ${wantFrom} — ${wantTo} (reads ${readDlgInputs().from} — ${readDlgInputs().to}).` }
       const submit = document.querySelector(SEL.customDateRangeSubmit)
-      if (!submit || submit.disabled || submit.getAttribute('aria-disabled') === 'true')
-        return { ok: false, message: `TradingView keeps Select disabled for ${wantFrom} — ${wantTo} (a future date, a date before the first available data, or the range already active).` }
-      submit.click()
+      if (!submit)
+        return { ok: false, message: 'the Select button of the Custom date range dialog was not found.' }
+      if (submit.disabled || submit.getAttribute('aria-disabled') === 'true') {
+        let forced = null
+        try {
+          forced = await tv.callPageAction('submitCustomDateRange', { from: wantFrom, to: wantTo, check }, 3000)
+        } catch (err) {
+          forced = { data: { success: false, reason: err.message || String(err) } }
+        }
+        if (!forced || !forced.data || !forced.data.success)
+          return { ok: false, message: `TradingView will not take ${wantFrom} — ${wantTo}: ${(forced && forced.data && forced.data.reason) || 'no response from the page'}.` }
+        if (check)
+          return { ok: true }
+        console.log(`[TV-ASS] Select was disabled for ${wantFrom} — ${wantTo} only because this page was loaded on ${forced.data.pageLimit}; submitted through the dialog's own handler`)
+      } else if (check) {
+        return { ok: true }
+      } else {
+        submit.click()
+      }
       const stillOpen = await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
       if (stillOpen)
         return { ok: false, message: `Custom date range dialog did not close after submitting ${wantFrom} — ${wantTo}.` }
@@ -1921,6 +1943,13 @@ tv.setTestingPeriod = async (from, to, label) => {
     if (!(await dlgReady()))
       return closeFail('Custom date range dialog did not finish loading (date inputs missing).')
     const pre = readDlgInputs()
+    if (check) {
+      // a range the active period already resolves to is pinned by the two-commit dance below, so it counts as taken
+      const step = pre.from === from && pre.to === to ? { ok: true } : await commitRange(from, to)
+      closeFail('')
+      await page.waitForSelector(SEL.customDateRangeDialog, 2000, true)
+      return step.ok ? { ok: true, message: `TradingView takes ${from} — ${to}.` } : { ok: false, message: step.message }
+    }
     if (pre.from === from && pre.to === to) {
       // the ACTIVE period (a rolling preset like "Last 90 days" — a concrete match never reaches
       // the dialog, the early exit returns first) already resolves to the target, but the saved
