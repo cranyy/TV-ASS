@@ -6,6 +6,9 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.136
+- The walk-forward report also shows the winner on your whole original testing period, start to finish, on the exact dates the run split. It is listed on its own and marked as including the training dates, so it never decides the verdict.
+
 ### 1.135
 - Fixed the walk-forward check failing at the very end of a long run with "TradingView keeps Select disabled". TradingView only accepts testing periods up to the day its page was loaded, so a tab opened yesterday refused a period ending today. The extension now sets such a period anyway (TradingView itself accepts it once it is submitted), and it checks the validation dates before the run starts, so a date problem stops the run in seconds instead of after hours. CSV Import gets the same fix.
 - New walk-forward report at the end of a run: a clear verdict, a timeline of the training and new dates, the winner's net profit, profit per month, trades, win rate, profit factor and drawdown on both parts side by side, and how the next best results and your starting settings did on the new dates. Results identical to the winner's are folded together. It follows TradingView's light and dark themes.

@@ -1301,8 +1301,11 @@ action._wfaRun = async (testParams, strategyData, allRangeParams, addInfo) => {
     }
     if (action.workerStatus === null)
       wfa.stopped = 'cycles'
-    else if (wfa.winnerPropVal)
+    else if (wfa.winnerPropVal) {
       await action._wfaValidate(testResults, wfa)
+      if (!wfa.validationError && !wfa.stopped && action.workerStatus !== null)
+        await action._wfaWhole(testResults, wfa)
+    }
   } catch (err) {
     runError = err
   }
@@ -1414,6 +1417,28 @@ action._wfaValidate = async (testResults, wfa) => {
       backtest._autosaveOnBest(testResults, { data: { ...check.row }, bestPropVal: check.propVal }, { force: true, suffix, ignoreFilters: true })
     })
 }
+
+// the winner, inputs unchanged, on the exact dates the run split (a rolling preset can move past midnight); these
+// include the training dates the winner was picked on, so the result is shown on its own and never feeds the verdict
+action._wfaWhole = async (testResults, wfa) => {
+  const whole = action._wfaWholePart(testResults.wfa)
+  ui.statusMessage(`<p>Whole original period ${action._wfaRange(whole)}: testing the winner.</p>`)
+  await backtest.delay(testResults.backtestDelay, testResults.randomDelay)
+  if (!(await tv.setStrategyParams(testResults.shortName, action._wfaOptimizedInputs(testResults, wfa.winnerPropVal)))) {
+    wfa.whole = { error: true, message: 'the best inputs could not be applied to the chart' }
+    return
+  }
+  testResults.lastAppliedParams = backtest._clonePropValues(wfa.winnerPropVal)
+  const refresh = await action._wfaSetWindow(testResults, whole)
+  if (!refresh.ok) {
+    wfa.whole = { error: true, message: refresh.message }
+    return
+  }
+  const res = await backtest.getTestIterationResult(testResults, wfa.winnerPropVal)
+  wfa.whole = { row: res.empty ? {} : { ...res.data }, error: res.error !== null, empty: !!res.empty, message: res.message || '' }
+}
+
+action._wfaWholePart = (split) => ({ from: split.full.from, to: split.full.to, days: split.training.days + split.validation.days })
 
 action._wfaCandidates = async (testResults, wfa) => {
   const target = testResults.optParamName
@@ -1630,6 +1655,14 @@ action._wfaTable = (testResults, wfa) => {
   rows.push(`<tr><th scope="row"><span class="iondvrep-swatch iondvrep-swatch-seen"></span>Training</th>${cells(wfa.winnerRow, split.training, true)}</tr>`)
   if (wfa.winnerPropVal && wfa.stopped !== 'cycles')
     rows.push(`<tr><th scope="row"><span class="iondvrep-swatch iondvrep-swatch-new"></span>New dates</th>${isRead(winner) ? cells(winner.row, split.validation, true) : winner && winner.row ? notRead(winner) : span('not tested')}</tr>`)
+  if (wfa.whole) {
+    const whole = action._wfaWholePart(split)
+    rows.push(`<tr class="iondvrep-section"><th colspan="${metrics.length + 1}" scope="colgroup">The whole original period <span class="iondvrep-aside">${action._wfaRange(whole)}, ${whole.days} days, includes the training dates</span></th></tr>`)
+    const result = isRead(wfa.whole) ? cells(wfa.whole.row, whole, true)
+      : wfa.whole.error ? span(`could not be tested: ${h(action._wfaClause(wfa.whole.message))}`)
+      : span('no trades')
+    rows.push(`<tr><th scope="row">Winner</th>${result}</tr>`)
+  }
 
   const others = action._wfaTableChecks(checks).filter(check => check !== winner)
   const hidden = checks.filter(check => check.rank > 5 && check.row && !others.includes(check))
@@ -1726,7 +1759,7 @@ action._wfaNotes = (testResults, wfa) => {
 action._wfaFooter = (testResults, wfa, problems) => {
   const fileName = (part) => action._resultsCsvName({ ...testResults, wfaWindow: part }).replace(/[\\/:*?"<>|]/g, '_')
   const saved = (wfa.checks || []).some(check => check.row)
-    ? `Every checked result is in <span class="iondvrep-file">${action._wfaHtml(fileName('validation'))}</span>.`
+    ? `Validation results are in <span class="iondvrep-file">${action._wfaHtml(fileName('validation'))}</span>.`
     : `The training results are in <span class="iondvrep-file">${action._wfaHtml(fileName('training'))}</span>.`
   const restored = [wfa.periodRestored && `your dates are back to "${action._wfaHtml(wfa.original.label)}"`, wfa.winnerApplied && 'the winner is on the chart'].filter(Boolean).join(' and ')
   const alert = problems.length ? `<div class="iondvrep-alert" role="alert">${problems.map(problem => `<p>${action._wfaHtml(problem)}</p>`).join('')}</div>` : ''
