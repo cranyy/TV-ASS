@@ -6,6 +6,12 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.138
+- Fixed CSV upload failing on Custom Timezone.
+
+### 1.137
+- Fixed CSV upload not setting the ticker after TradingView changed symbol search.
+
 ### 1.136
 - The walk-forward report also shows the winner on your whole original testing period, start to finish, on the exact dates the run split. It is listed on its own and marked as including the training dates, so it never decides the verdict.
 

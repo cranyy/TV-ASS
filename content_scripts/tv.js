@@ -1000,7 +1000,16 @@ tv.applyInputParams = async (propVal) => {
       } catch {}
       const propClassName = indicProperties[i].getAttribute('class')
       let success = false
-      if (propClassName.includes('first-')) {
+      // Inline boolean labels can share a row with a separate, unnamed dropdown.
+      const checkboxEl = indicProperties[i].querySelector('input[type="checkbox"]')
+      if (checkboxEl && (typeof propVal[propText] === 'boolean' || propClassName.includes('fill-'))) {
+        const want = Boolean(propVal[propText])
+        if (want !== Boolean(checkboxEl.checked)) {
+          page.mouseClick(checkboxEl)
+          checkboxEl.checked = want
+        }
+        success = true
+      } else if (propClassName.includes('first-')) {
         i++
         if (i >= indicProperties.length) {
           failed.push(propText)
@@ -1022,17 +1031,6 @@ tv.applyInputParams = async (propVal) => {
               success = await page.setSelByText(SEL.strategyListOptions, propVal[propText])
             }
           }
-        }
-      } else if (propClassName.includes('fill-')) {
-        let checkboxEl = indicProperties[i].querySelector('input[type="checkbox"]')
-        if (checkboxEl) {
-          const isChecked = Boolean(checkboxEl.checked)
-          if (Boolean(propVal[propText]) !== isChecked) {
-            page.mouseClick(checkboxEl)
-            checkboxEl.checked = Boolean(propVal[propText])
-          }
-          success = true
-          checkboxEl = null
         }
       }
       if (success)
@@ -1663,6 +1661,10 @@ tv.setTicker = async (tickerFull) => {
     // active before scanning rows. "All" has no id — match by text/tooltip, else first tab.
     // Clicking a tab re-filters the already-typed query, no retyping needed. If the tab row is
     // missing (TV change), continue: the strict row match below stays the fail-closed backstop.
+    // A selected category now appears as a filter pill instead of the tab row.
+    const categoryReset = document.querySelector(SEL.symbolSearchCategoryReset)
+    if (categoryReset)
+      freshClick(categoryReset)
     const tabs = document.querySelectorAll(SEL.symbolSearchTab)
     if (tabs.length) {
       const allTab = [...tabs].find(b => (b.innerText || '').trim() === 'All'
@@ -1670,7 +1672,7 @@ tv.setTicker = async (tickerFull) => {
       if (allTab && allTab.getAttribute('aria-selected') !== 'true')
         freshClick(allTab)
     }
-    // Find the exact result row: prefer one whose text contains both EXCHANGE and SYMBOL of "EXCHANGE:SYMBOL"
+    // Match the row identity: the exchange is now a logo/tooltip, absent from innerText.
     const wantExchange = targetUpper.includes(':') ? targetUpper.split(':')[0] : null
     const wantSymbol = targetUpper.includes(':') ? targetUpper.split(':')[1] : targetUpper
     // STRICT match: require BOTH symbol AND exchange to match (symbol-only for an unqualified target) so we never silently land on a wrong-exchange security that shares the ticker. No symbol-only fallback for qualified targets — if the qualified row isn't found, fail (best-effort flags the ticker for a manual click) rather than guess.
@@ -1678,11 +1680,9 @@ tv.setTicker = async (tickerFull) => {
     // instead of a single fixed-delay read.
     const scanRows = () => {
       for (const it of document.querySelectorAll(SEL.symbolSearchItem)) {
-        const txt = (it.innerText || '').toUpperCase()
-        const tokens = txt.split('\n').map(s => s.trim()).filter(Boolean)
-        const symbolMatch = tokens.some(t => t === wantSymbol) || txt.includes(wantSymbol)
-        const exchMatch = !wantExchange || txt.includes(wantExchange)
-        if (symbolMatch && exchMatch) return it
+        const symbol = (it.getAttribute('data-symbol-name') || '').toUpperCase()
+        if (wantExchange ? symbol === targetUpper : symbol.split(':').pop() === wantSymbol)
+          return it
       }
       return null
     }
