@@ -1,9 +1,10 @@
 const model = {}
 
 
-model.getStrategyParameters = async (strategyData) => {
+// providedRange: ranges from the caller, checked like the stored ones but never saved.
+model.getStrategyParameters = async (strategyData, providedRange = null) => {
   const strategyKeys = Object.keys(strategyData.properties)
-  let storedRange = await storage.getKey(storage.STRATEGY_KEY_PARAM)
+  let storedRange = providedRange || await storage.getKey(storage.STRATEGY_KEY_PARAM)
   if (storedRange) {
     const mismatched = Object.keys(storedRange).filter(key => !strategyKeys.includes(key))
     if (mismatched && mismatched.length) {
@@ -55,7 +56,7 @@ model.getStrategyParameters = async (strategyData) => {
     shouldPersist = true
   }
 
-  if (shouldPersist)
+  if (shouldPersist && !providedRange)
     await storage.setKeys(storage.STRATEGY_KEY_PARAM, normalizedRange)
 
   return normalizedRange
@@ -100,12 +101,22 @@ model.getStrategyRange = (strategyData) => {
 
 model.parseStrategyParamsAndGetMsg = async (fileData, allowedKeys = null, baseRange = null) => {
   console.log('parsStrategyParamsAndGetMsg filename', fileData)
+  const parsed = await model.parseStrategyParams(fileData, allowedKeys, baseRange)
+  if (parsed.error)
+    return parsed.error
+  await model.saveStrategyParameters(parsed.paramRange)
+  console.log(parsed.paramRange)
+  return `The data was saved in the storage. \nTo use them for repeated testing, click on the "Test strategy" button in the extension pop-up window.`
+}
+
+// Reads a ranges CSV for the current strategy without saving it: { paramRange }, or { error } with the message to show.
+model.parseStrategyParams = async (fileData, allowedKeys = null, baseRange = null) => {
   const paramRange = {}
   const csvData = await file.parseCSV(fileData)
   const headers = Object.keys(csvData[0])
   const missColumns = ['parameter','from','to','step','default','priority'].filter(columnName => !headers.includes(columnName.toLowerCase()))
   if(missColumns && missColumns.length)
-    return `  - ${fileData.name}: There is no column(s) "${missColumns.join(', ')}" in CSV.\nPlease add all necessary columns to CSV like showed in the template.\n\nUploading canceled.\n`
+    return { error: `  - ${fileData.name}: There is no column(s) "${missColumns.join(', ')}" in CSV.\nPlease add all necessary columns to CSV like showed in the template.\n\nUploading canceled.\n` }
   const allowedCanonicalMap = buildCanonicalMap(allowedKeys)
   const allowedValues = Object.values(allowedCanonicalMap)
   const allowedSet = allowedValues.length ? new Set(allowedValues) : null
@@ -132,7 +143,7 @@ model.parseStrategyParamsAndGetMsg = async (fileData, allowedKeys = null, baseRa
       paramRange[paramName] = normalizedEntry
   })
   if (allowedSet && unknownKeys.size) {
-    return `  - ${fileData.name}: The file contains parameter(s) that are not part of the current strategy: ${Array.from(unknownKeys).join(', ')}. Upload canceled.\n`
+    return { error: `  - ${fileData.name}: The file contains parameter(s) that are not part of the current strategy: ${Array.from(unknownKeys).join(', ')}. Upload canceled.\n` }
   }
   const baseEntries = baseRange || {}
   if (allowedSet || baseEntries) {
@@ -153,9 +164,7 @@ model.parseStrategyParamsAndGetMsg = async (fileData, allowedKeys = null, baseRa
       }
     })
   }
-  await model.saveStrategyParameters(paramRange)
-  console.log(paramRange)
-  return `The data was saved in the storage. \nTo use them for repeated testing, click on the "Test strategy" button in the extension pop-up window.`
+  return { paramRange }
 }
 
 model.convertStrategyRangeToTemplate = (paramRange) => {

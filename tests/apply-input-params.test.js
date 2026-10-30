@@ -23,9 +23,9 @@ async function run(request, { checked = false, labelClass = 'first-', checkbox =
     cell('UTC', '', numeric ? { input } : { 'button[role="combobox"]': dropdown })]
   const context = vm.createContext({
     tv: {}, SEL: { indicatorProperty: 'cells', strategyListOptions: 'options' },
-    document: { querySelectorAll: () => cells },
+    document: { querySelectorAll: () => cells, querySelector: () => null },
     page: {
-      $: () => null, waitForTimeout: async () => {},
+      $: () => null, waitForTimeout: async () => {}, waitForSelector: async () => true, getElText: el => el.innerText,
       mouseClick: el => { if (el === cb) { clicks++; cb.checked = !cb.checked } },
       setInputElementValue: (el, value) => { el.value = value },
       setSelByText: async (_selector, value) => { selected.push(value); dropdown.innerText = value; return typeof value === 'string' }

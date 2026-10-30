@@ -2,6 +2,34 @@ const action = {
   workerStatus: null
 }
 
+// A stopped run can still be waiting on its last popup. A new start closes it and waits for that run's cleanup, so the
+// old cleanup cannot clear the new run's busy flag or remove its status box.
+action._unfinishedWork = new Set()
+
+action.beginWork = () => {
+  let finish
+  const work = new Promise(resolve => { finish = resolve })
+  action._unfinishedWork.add(work)
+  return () => {
+    action._unfinishedWork.delete(work)
+    finish()
+  }
+}
+
+// Waits only for work already unfinished when called, and stops once another start claims the tab.
+action.finishPreviousWork = async () => {
+  const previous = [...action._unfinishedWork]
+  const pending = () => previous.filter(work => action._unfinishedWork.has(work))
+  if (pending().length)
+    ui.statusMessage('<p>Waiting for the previous run to finish.</p>')
+  while (pending().length && action.workerStatus === null) {
+    ui.closeOpenPopup()
+    await Promise.race([Promise.all(pending()), page.waitForTimeout(500)])
+  }
+  if (action.workerStatus === null)
+    ui.closeOpenPopup()
+}
+
 const message = {
   errorsNoBacktest: 'There is no backtest data. Try to do a new backtest'
 }
@@ -944,17 +972,18 @@ action.downloadStrategyTestResults = async () => {
     if (bestResult && bestResult.hasOwnProperty(testResults.optParamName))
       await ui.showPopup(`The best found parameters are set for the strategy\n\nThe best ${testResults.isMaximizing ? '(max) ' : '(min)'} ${testResults.optParamName}: ` + bestResult[testResults.optParamName])
   }
-  file.saveAs(CSVResults, `${testResults.ticker}:${testResults.timeFrame} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}${testResults.wfaWindow ? `_${testResults.wfaWindow}` : ''}.csv`)
+  file.saveAs(CSVResults, action._resultsCsvName(testResults))
 }
 
 
 
 
 action.testStrategy = async (request, isDeepTest = false) => {
+  action.lastRunResults = null
   try {
     const strategyData = await action._getStrategyData(isDeepTest)
     isDeepTest = await tvChart.detectDeepTest()
-    const [allRangeParams, paramRange, cycles] = await action._getRangeParams(strategyData)
+    const [allRangeParams, paramRange, cycles] = await action._getRangeParams(strategyData, await action._requestedRange(request, strategyData))
     if (allRangeParams !== null) { // click cancel on parameters
       const testParams = await action._getTestParams(request, strategyData, allRangeParams, paramRange, cycles, isDeepTest)
       console.log('Test parameters', testParams)
@@ -1017,8 +1046,23 @@ action.testStrategy = async (request, isDeepTest = false) => {
   ui.statusMessageRemove()
 }
 
-action._getRangeParams = async (strategyData) => {
-  let paramRange = await model.getStrategyParameters(strategyData)
+// Ranges sent with the start request: a ranges CSV, or a copy of the stored ranges ({} means the strategy's defaults).
+// A setup on another tab cannot change them mid-run. Null when none were sent: the stored ranges are read.
+action._requestedRange = async (request, strategyData) => {
+  if (request && typeof request.rangesCsv === 'string') {
+    const baseRange = model.getStrategyRange(strategyData)
+    const parsed = await model.parseStrategyParams(new File([request.rangesCsv], 'ranges.csv', { type: 'text/csv' }), Object.keys(baseRange), baseRange)
+    if (parsed.error)
+      throw new Error(parsed.error)
+    return parsed.paramRange
+  }
+  if (request && request.paramRange && typeof request.paramRange === 'object' && !Array.isArray(request.paramRange))
+    return JSON.parse(JSON.stringify(request.paramRange))
+  return null
+}
+
+action._getRangeParams = async (strategyData, providedRange = null) => {
+  let paramRange = await model.getStrategyParameters(strategyData, providedRange)
   console.log('paramRange', paramRange)
   if (paramRange === null)
     // throw new Error('Error get changed strategy parameters')
@@ -1095,6 +1139,7 @@ action._getTestParams = async (request, strategyData, allRangeParams, paramRange
   testParams.listOfTFSource = options.listOfTF
   testParams.shouldSkipInitBestResult = false // TODO get from options
 
+  testParams.runId = action._isRunId(request && request.runId) ? request.runId : action._newRunId()
   testParams.paramSpace = paramSpaceNumber
   let paramPriority = model.getParamPriorityList(paramRange) // Filter by allRangeParams
   paramPriority = paramPriority.filter(key => allRangeParams.hasOwnProperty(key))
@@ -1223,7 +1268,16 @@ action._showStartMsg = (paramSpaceNumber, cycles, addInfo, extraRows = '') => {
 }
 
 action._resultsCsvName = (testResults) =>
-  `${testResults.ticker}:${testResults.timeFrame}${testResults.isDeepTest ? ' deep backtesting' : ''} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}${testResults.wfaWindow ? `_${testResults.wfaWindow}` : ''}.csv`
+  `${testResults.ticker}:${testResults.timeFrame}${testResults.isDeepTest ? ' deep backtesting' : ''} ${testResults.shortName} - ${testResults.cycles}_${testResults.isMaximizing ? 'max' : 'min'}_${testResults.optParamName}_${testResults.method}${testResults.runId ? `_run-${testResults.runId}` : ''}${testResults.wfaWindow ? `_${testResults.wfaWindow}` : ''}.csv`
+
+// Start time plus 4 random characters, so runs started in the same second on different tabs get different names.
+action._newRunId = (now = new Date()) => {
+  const two = value => String(value).padStart(2, '0')
+  const random = Math.random().toString(36).slice(2, 6).padEnd(4, '0')
+  return `${two(now.getFullYear() % 100)}${two(now.getMonth() + 1)}${two(now.getDate())}-${two(now.getHours())}${two(now.getMinutes())}${two(now.getSeconds())}-${random}`
+}
+
+action._isRunId = (value) => typeof value === 'string' && /^\d{6}-\d{6}-[a-z0-9]{4}$/.test(value)
 
 action._saveTestResults = async (testResults, testParams, isFinalTest = true) => {
   console.log('testResults', testResults)
@@ -1233,6 +1287,8 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
     await ui.showWarningPopup('There is no testing data for saving. Try to do test again')
     return
   }
+  // this tab's own copy: the stored one can be replaced by a run on another tab. Updated again after the final autosave.
+  action.lastRunResults = action._resultsSnapshot(testResults)
 
   const { fullSummary, fullFiltered } = await model.buildExportSummaries(testResults)
   const exportResults = { ...testResults, perfomanceSummary: fullSummary, filteredSummary: fullFiltered }
@@ -1245,8 +1301,9 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
     if (bestResult.hasOwnProperty(`__${paramName}`))
       propVal[paramName] = bestResult[`__${paramName}`]
   })
+  let isBestApplied = true
   if (isFinalTest) {
-    await tv.setStrategyParams(testResults.shortName, propVal)
+    isBestApplied = await tv.setStrategyParams(testResults.shortName, propVal)
     // with any range except "Available chart range" TradingView recomputes only on "Update report", so without this the
     // chart keeps showing the last tested combination's report next to the best inputs
     await tv.generateDeepTestReport()
@@ -1255,6 +1312,7 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
   let text = `All done.\n\n`
   text += bestResult && bestResult.hasOwnProperty(testParams.optParamName) ? 'The best ' + (testResults.isMaximizing ? '(max) ' : '(min) ') + testParams.optParamName + ': ' + backtest.convertValue(bestResult[testParams.optParamName]) : ''
   text += (initBestValue !== null && bestResult && bestResult.hasOwnProperty(testParams.optParamName) && initBestValue === bestResult[testParams.optParamName]) ? `\nIt isn't improved from the initial value: ${backtest.convertValue(initBestValue)}` : ''
+  text += isBestApplied ? '' : '\nThe best inputs could not all be applied to the chart; load the _FINAL file with CSV Import.'
   ui.statusMessage(text)
   // clear #iondvApplyLine at the terminal "All done." status. The final best-parameter apply above (isFinalTest -> tv.setStrategyParams) leaves "✓ Applied …" in the apply line; without this it would sit next to the completed-run message. Guarded; statusMessage(text) above is the replace-path and does not touch the apply line.
   try { if (typeof ui.statusApplyLine === 'function') ui.statusApplyLine('') } catch {}
@@ -1281,6 +1339,21 @@ action._saveTestResults = async (testResults, testParams, isFinalTest = true) =>
       }
     }
   }
+  action.lastRunResults = action._resultsSnapshot(testResults)
+}
+
+// A copy that later phases of the run (the walk-forward validation) do not change.
+action._resultsSnapshot = (testResults) => {
+  const copy = { ...testResults }
+  for (const key of ['perfomanceSummary', 'filteredSummary'])
+    if (Array.isArray(testResults[key]))
+      copy[key] = testResults[key].map(row => ({ ...row }))
+  for (const key of ['summaryChunks', 'filteredChunks'])
+    if (Array.isArray(testResults[key]))
+      copy[key] = [...testResults[key]]
+  if (testResults.runContext && typeof testResults.runContext === 'object')
+    copy.runContext = JSON.parse(JSON.stringify(testResults.runContext))
+  return copy
 }
 
 action._wfaRun = async (testParams, strategyData, allRangeParams, addInfo) => {
@@ -1395,16 +1468,32 @@ action._wfaValidate = async (testResults, wfa) => {
     ui.statusMessage(action._wfaProgress(testResults, wfa))
     await backtest.delay(testResults.backtestDelay, testResults.randomDelay)
     // reading again after a failed refresh would return the previous dates' report
-    const res = check.kind === 'winner' && !refresh.ok
+    const isRefreshFailed = check.kind === 'winner' && !refresh.ok
+    let res = isRefreshFailed
       ? { error: refresh.error, message: refresh.message, data: {} }
       : await backtest.getTestIterationResult(testResults, check.propVal)
-    const empty = !!res.empty
+    // a result counts only when the chart is confirmed to hold the inputs it is recorded under
+    let unconfirmed = null
+    if (!isRefreshFailed && res.error === null) {
+      let found = await action._wfaUnconfirmedInputs(testResults, check)
+      if (found.mismatched.length && action.workerStatus !== null) {
+        forgetAppliedInputs(testResults, found.mismatched) // so the next read sends them again
+        res = await backtest.getTestIterationResult(testResults, check.propVal)
+        found = res.error === null ? await action._wfaUnconfirmedInputs(testResults, check) : null
+      }
+      if (found && (found.mismatched.length || found.unknown.length)) {
+        unconfirmed = found
+        forgetAppliedInputs(testResults, Object.keys(action._wfaOptimizedInputs(testResults, check.propVal)))
+      }
+    }
+    const empty = !unconfirmed && !!res.empty
     // a no-trades report can still show the previous report's numbers
-    const row = empty ? {} : { ...res.data }
+    const row = empty || unconfirmed ? {} : { ...res.data }
     Object.keys(check.propVal).forEach(key => { row[`__${key}`] = check.propVal[key] })
-    const detail = empty ? 'No trades: the strategy report requires trade data for these parameter values.' : row.comment || res.message || ''
+    const detail = unconfirmed ? action._wfaUnconfirmedText(unconfirmed)
+      : empty ? 'No trades: the strategy report requires trade data for these parameter values.' : row.comment || res.message || ''
     row.comment = `${action._wfaRowComment(testResults, check)}${detail ? ` ${detail}` : ''}`
-    Object.assign(check, { row, error: res.error !== null, empty, message: detail })
+    Object.assign(check, { row, error: res.error !== null || !!unconfirmed, empty, message: detail })
   }
   const rows = checks.filter(check => check.row).map(check => check.row)
   if (!rows.length)
@@ -1794,6 +1883,34 @@ action._wfaProgress = (testResults, wfa) => {
     text += `<p style="color: red">${action._wfaCheckLabel(check)}: ${check.message}</p>`
   })
   return text
+}
+
+function forgetAppliedInputs(testResults, keys) {
+  if (testResults.lastAppliedParams)
+    keys.forEach(key => { delete testResults.lastAppliedParams[key] })
+}
+
+// Reads the inputs back from the chart: the check's inputs that differ, and those that could not be read or compared.
+action._wfaUnconfirmedInputs = async (testResults, check) => {
+  const wanted = action._wfaOptimizedInputs(testResults, check.propVal)
+  const read = await tv._readCommittedInputs() || await tv._readCommittedInputs()
+  const mismatched = []
+  const unknown = []
+  Object.keys(wanted).forEach(key => {
+    const verdict = read ? tv._compareInput(read[key], wanted[key]) : 'unknown'
+    if (verdict === 'mismatch')
+      mismatched.push(key)
+    else if (verdict === 'unknown')
+      unknown.push(key)
+  })
+  return { mismatched, unknown }
+}
+
+action._wfaUnconfirmedText = ({ mismatched, unknown }) => {
+  const list = keys => `${keys.slice(0, 6).join(', ')}${keys.length > 6 ? ` and ${keys.length - 6} more` : ''}`
+  return mismatched.length
+    ? `Not tested: the chart did not take ${list(mismatched)}.`
+    : `Not tested: ${list(unknown)} could not be confirmed on the chart.`
 }
 
 action._wfaRowComment = (testResults, check) => {

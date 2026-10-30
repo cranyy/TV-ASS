@@ -6,6 +6,10 @@ Again, I cannot express enough credit to the original repo creator https://githu
 
 ## CHANGELOG
 
+### 1.139
+- Fixed results sometimes being saved under the wrong settings: when TradingView ignored a dropdown change, when a run was started after Stop, or when the walk-forward check's inputs did not reach the chart.
+- Results file names now include a run id, so files from repeated or parallel runs no longer get mixed up.
+
 ### 1.138
 - Fixed CSV upload failing on Custom Timezone.
 

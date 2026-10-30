@@ -184,7 +184,7 @@ async function messageHandler(event) {
     const resolve = tvPageMessageData[messageKey]
     delete tvPageMessageData[messageKey]
     resolve(event.data)
-  } else {
+  } else if (!event.data.requestId) { // a late reply: its caller timed out, so nothing would read it
     tvPageMessageData[messageKey] = event.data.data
   }
 }
@@ -383,6 +383,43 @@ tv._valuesLooseEqual = (a, b) => {
   return false
 }
 
+// 'match' or 'mismatch' for an input read from the dialog against the wanted value; 'unknown' when the two cannot be
+// compared (nothing read, or a checkbox against a non-boolean value)
+tv._compareInput = (read, wanted) => {
+  if (read === undefined || read === null || wanted === undefined || wanted === null)
+    return 'unknown'
+  if (typeof read === 'boolean') {
+    const text = String(wanted).trim().toLowerCase()
+    const want = text === 'true' || text === '1' ? true : text === 'false' || text === '0' || text === '' ? false : null
+    return want === null ? 'unknown' : want === read ? 'match' : 'mismatch'
+  }
+  if (typeof wanted === 'boolean')
+    return 'unknown'
+  return tv._valuesLooseEqual(read, wanted) || String(read).trim().toLowerCase() === String(wanted).trim().toLowerCase()
+    ? 'match' : 'mismatch'
+}
+
+// The strategy inputs as the chart holds them: the dialog is opened afresh, read, and closed with Cancel. Null when the
+// dialog cannot be opened or read.
+tv._readCommittedInputs = async () => {
+  try {
+    if (!await tv.openStrategyParameters(null, false))
+      return null
+    const name = tv.getStrategyNameFromPopup()
+    await tv.changeDialogTabToInput()
+    const inputs = await tv.getStrategyParams(true, true, name)
+    return inputs && Object.keys(inputs).length ? inputs : null
+  } catch {
+    return null
+  } finally {
+    const cancelBtn = page.$(SEL.cancelBtn)
+    if (cancelBtn) {
+      cancelBtn.click()
+      await page.waitForSelector(SEL.cancelBtn, 1000, true)
+    }
+  }
+}
+
 tv._verifyDomApply = async (requested) => {
   // read with useLiveCheckbox=true: the dialog isn't virtualized (every row renders), but getStrategyParams' default checkbox read uses the stale 'checked' ATTRIBUTE pre-commit, so a just-flipped box would read wrong. Live Boolean(element.checked) is correct on the still-open dialog. (true, true) = read-only + live checkbox.
   let readback = {}
@@ -427,6 +464,8 @@ tv._setStrategyParamsLegacy = async (name, propVal, isDeepTest = false, keepStra
   let indicProperties = document.querySelectorAll(SEL.indicatorProperty)
   const propKeys = Object.keys(propVal)
   let setPropertiesNames = {}
+  const encountered = new Set()
+  const failed = []
   for (let i = 0; i < indicProperties.length; i++) {
     const propText = indicProperties[i].innerText
     if (propText && propKeys.includes(propText)) {
@@ -440,7 +479,8 @@ tv._setStrategyParamsLegacy = async (name, propVal, isDeepTest = false, keepStra
         }
       } catch {
       }
-      setPropertiesNames[propText] = true
+      encountered.add(propText)
+      let isApplied = true
       const propClassName = indicProperties[i].getAttribute('class')
       if (propClassName.includes('first-')) {
         i++
@@ -451,10 +491,8 @@ tv._setStrategyParamsLegacy = async (name, propVal, isDeepTest = false, keepStra
         } else {
           let buttonEl = indicProperties[i].querySelector('button[role="combobox"]')
           if (buttonEl?.innerText) {
-            // upstream #354 fix: open the combobox via page.mouseClick (fires mousedown); native .click() no longer opens TV's menu
-            page.mouseClick(buttonEl)
             buttonEl = null
-            await page.setSelByText(SEL.strategyListOptions, propVal[propText])
+            isApplied = await tv._selectComboValue(propText, indicProperties[i], propVal[propText])
           }
         }
       } else if (propClassName.includes('fill-')) {
@@ -468,7 +506,11 @@ tv._setStrategyParamsLegacy = async (name, propVal, isDeepTest = false, keepStra
           checkboxEl = null
         }
       }
-      if (propKeys.length === Object.keys(setPropertiesNames).length)
+      if (isApplied)
+        setPropertiesNames[propText] = true
+      else
+        failed.push(propText)
+      if (propKeys.length === encountered.size)
         break
     }
   }
@@ -478,12 +520,13 @@ tv._setStrategyParamsLegacy = async (name, propVal, isDeepTest = false, keepStra
     elOkBtn.click()
 
   const appliedKeys = Object.keys(setPropertiesNames)
-  const missingKeys = propKeys.filter(key => !setPropertiesNames[key])
+  const missingKeys = propKeys.filter(key => !encountered.has(key))
 
   return {
-    success: missingKeys.length === 0,
+    success: missingKeys.length === 0 && failed.length === 0,
     applied: appliedKeys,
-    missing: missingKeys
+    missing: missingKeys,
+    failed
   }
 }
 
@@ -494,6 +537,7 @@ tv._humanizeStrategyApply = async (resultLike) => {
     const changed = Array.isArray(keys) ? keys.filter(Boolean) : []
     const missCount = (resultLike && Array.isArray(resultLike.missing) ? resultLike.missing.length : 0)
       + (resultLike && Array.isArray(resultLike.errors) ? resultLike.errors.length : 0)
+      + (resultLike && Array.isArray(resultLike.failed) ? resultLike.failed.length : 0)
     if (!changed.length && !missCount)
       return 0
     let line
@@ -1023,13 +1067,8 @@ tv.applyInputParams = async (propVal) => {
         } else {
           let buttonEl = indicProperties[i].querySelector('button[role="combobox"]')
           if (buttonEl?.innerText) {
-            if (buttonEl.innerText === propVal[propText]) {
-              success = true
-            } else {
-              page.mouseClick(buttonEl)
-              buttonEl = null
-              success = await page.setSelByText(SEL.strategyListOptions, propVal[propText])
-            }
+            buttonEl = null
+            success = await tv._selectComboValue(propText, indicProperties[i], propVal[propText])
           }
         }
       }
@@ -1044,6 +1083,57 @@ tv.applyInputParams = async (propVal) => {
   indicProperties = null
   const missing = propKeys.filter(key => !encountered.has(key))
   return { applied, missing, failed }
+}
+
+// The value cell of the input labelled `label`, looked up again because the dialog can re-render a row after a change.
+tv._inputValueCell = (label) => {
+  const cells = document.querySelectorAll(SEL.indicatorProperty)
+  for (let i = 0; i < cells.length - 1; i++)
+    if (cells[i].innerText === label)
+      return cells[i + 1]
+  return null
+}
+
+// Picks `wanted` in an input's dropdown, tries twice, and returns true only when the dropdown then shows it.
+tv._selectComboValue = async (label, valueCell, wanted) => {
+  const target = String(wanted ?? '').trim().toLowerCase()
+  const cell = () => valueCell && valueCell.isConnected !== false ? valueCell : tv._inputValueCell(label)
+  const button = () => cell()?.querySelector('button[role="combobox"]') || null
+  const shown = () => {
+    const el = button()
+    return el ? page.getElText(el).trim().toLowerCase() : null
+  }
+  // setSelByText returns true even when the list stays open
+  const closeList = async () => {
+    if (!document.querySelector(SEL.strategyListOptions))
+      return
+    const el = button()
+    if (el)
+      page.mouseClick(el)
+    await page.waitForSelector(SEL.strategyListOptions, 1000, true)
+  }
+  const before = shown()
+  if (before === null || !target)
+    return false
+  if (before === target)
+    return true
+  for (let attempt = 0; attempt < 2; attempt++) {
+    const el = button()
+    if (!el)
+      return false
+    // upstream #354 fix: open the combobox via page.mouseClick (fires mousedown); native .click() no longer opens TV's menu
+    page.mouseClick(el)
+    await page.setSelByText(SEL.strategyListOptions, String(wanted))
+    // the same prefix rule setSelByText uses to pick the option
+    for (let poll = 0; poll < 10; poll++) {
+      const now = shown()
+      if (now === target || (now !== null && now !== before && now.startsWith(target)))
+        return true
+      await page.waitForTimeout(50)
+    }
+    await closeList()
+  }
+  return false
 }
 
 tv.getChartSession = async () => {

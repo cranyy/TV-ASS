@@ -15,16 +15,24 @@
         console.log('Not for action message received:', request)
         return sendResponse()
       }
-      if(action.workerStatus !== null) {
+      const isBusy = () => {
+        if (action.workerStatus === null)
+          return false
         const msg = `Waiting for end previous work. Status: ${action.workerStatus}`
         console.log(msg)
         ui.autoCloseAlert(msg)
-        return sendResponse()
+        return true
       }
+      if (isBusy())
+        return sendResponse()
+      sendResponse()
+      await action.finishPreviousWork()
+      if (isBusy()) // another start went first while this one waited
+        return
 
       action.workerStatus = request.action
+      const finishWork = action.beginWork()
       try {
-        sendResponse()
         switch (request.action) {
           case 'saveParameters': {
             await action.saveParameters()
@@ -73,6 +81,7 @@
       }
       action.workerStatus = null
       ui.statusMessageRemove()
+      finishWork()
     }
   );
 

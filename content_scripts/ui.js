@@ -92,7 +92,13 @@ ui.checkInjectedElements = () => {
 	      if (ui.importExportBusy || action.workerStatus)
 	        return
 	      ui.importExportBusy = true
+	      await action.finishPreviousWork()
+	      if (action.workerStatus) {
+	        ui.importExportBusy = false
+	        return
+	      }
 	      action.workerStatus = actionName
+	      const finishWork = action.beginWork()
 	      setImportExportDisabled(true)
 	      try {
 	        console.log('[TV-ASS] import/export click', {
@@ -108,6 +114,7 @@ ui.checkInjectedElements = () => {
 	          action.workerStatus = null
 	        ui.importExportBusy = false
 	        setImportExportDisabled(false)
+	        finishWork()
 	      }
 	    }
 	    const bindImportExportButton = (btn, actionName, fn) => {
@@ -571,6 +578,27 @@ ui.reportPopup = (report) => new Promise(resolve => {
     ok.focus({ preventScroll: true })
   shade.scrollTop = 0
 })
+
+// Closes an open TV-ASS popup and cancels a parameters window left by a stopped run, as if the user had closed them.
+// A leftover parameters window would be taken for the next run's, and its Skip&Run would restart the stopped run.
+ui.closeOpenPopup = () => {
+  const popup = document.getElementById('iondvAlertPopup')
+  if (popup) {
+    const button = popup.querySelector('#iondvPopupCancelBtn') || popup.querySelector('#iondvPopupCloseBtn')
+    if (button)
+      button.click()
+    else
+      popup.remove()
+  }
+  const paramWindow = document.getElementById('iondvStratParam')
+  if (paramWindow) {
+    const cancel = paramWindow.querySelector('#stratParamCancel')
+    if (cancel)
+      cancel.click()
+    else
+      paramWindow.remove()
+  }
+}
 
 ui.statusMessageRemove = () => {
   const statusMessageEl = document.getElementById('iondvStatus')

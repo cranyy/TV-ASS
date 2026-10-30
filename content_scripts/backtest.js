@@ -1193,12 +1193,16 @@ backtest.getTestIterationResult = async (testResults, propVal, isIgnoreError = f
           const apiErrors = diag.response && Array.isArray(diag.response.errors) ? diag.response.errors.length : 0
           const legacyMissing = diag.legacy && Array.isArray(diag.legacy.missing) ? diag.legacy.missing.length : 0
           const legacyApplied = diag.legacy && Array.isArray(diag.legacy.applied) ? diag.legacy.applied.length : 0
+          const legacyFailed = diag.legacy && Array.isArray(diag.legacy.failed) ? diag.legacy.failed.length : 0
           let brief = `Params not set [${diag.method || '?'}]`
           if (apiMissing) brief += ` api-miss:${apiMissing}`
           if (apiErrors) brief += ` api-err:${apiErrors}`
-          if (legacyApplied || legacyMissing) brief += ` legacy:${legacyApplied}ok/${legacyMissing}miss`
+          if (legacyApplied || legacyMissing || legacyFailed) brief += ` legacy:${legacyApplied}ok/${legacyMissing}miss${legacyFailed ? `/${legacyFailed}failed` : ''}`
           else if (diag.legacy === null || diag.legacy === undefined) brief += ' legacy:not-reached'
           try { console.warn('[TV-ASS] Setter failure diagnostics:', JSON.stringify(diag, null, 2)) } catch { console.warn('[TV-ASS] Setter failure diagnostics:', String(diag)) }
+          // what the chart now holds for these inputs is unknown, so forget them: the next candidate sends them again
+          if (testResults.lastAppliedParams)
+            Object.keys(setterPayload).forEach(key => delete testResults.lastAppliedParams[key])
           return { error: 1, message: brief, data: {} }
         }
         setTime = Math.round((new Date() - paramsStart) / 1000 * 10) / 10
